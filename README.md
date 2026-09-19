@@ -7,7 +7,8 @@ think their eyes would go on a photo. Their collective guesses are displayed,
 then compared against a state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** specification drafted, implementation not started.
+**Status:** specification approved (2026-09-19), implementation not started.
+Build proceeds from Phase 1 of the spec's build order.
 
 ## Start here
 

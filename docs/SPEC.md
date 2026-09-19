@@ -1,6 +1,6 @@
 # Scanpath Estimation Demo — Product & Technical Spec
 
-**Status:** Draft for approval · **Owner:** bszperlinski1@st.swps.edu.pl
+**Status:** Approved, 2026-09-19 · **Owner:** bszperlinski1@st.swps.edu.pl
 **Repo:** `berbelekhieronim/scanpath-estimation` · **Branch:** `claude/eye-gaze-annotation-app-fvoz8p`
 
 ---
@@ -231,16 +231,24 @@ identical across them. Generating them in a single `generate()` call with
 cost barely more than one. A realistic precompute of 5 images × 3 configs is
 ~15 prefills, so **half an hour on your MacBook**, not an afternoon.
 
-**Revised tier recommendation:**
+**Slow is acceptable** (owner's constraint, confirmed). This materially
+changes the plan for the better: the 1–3 minute runtime is no longer a reason to
+avoid live inference, and it means there is **no scenario in which the model
+cannot be run at all** — if MPS fails, plain CPU on 32 GB of RAM still executes
+the same script, just at perhaps 10–20 minutes per image. Slow beats absent, and
+precompute makes runtime invisible at demo time anyway.
 
-- **Tier A — Precompute on the MacBook (recommended).** Run `tools/precompute.py` overnight or over a coffee, commit the JSON to `data/model/`, web app serves it instantly. No GPU present at demo time, nothing to fail in front of an audience. This is not faking: same weights, same prompt, same output, computed Tuesday instead of during the talk. The dishonest version would be hand-drawing plausible paths — don't do that, run the real model early.
-- **Tier C — Laptop-in-the-loop (available, with a caveat).** `tools/push_result.py` POSTs a local run to the web app, which is polling and renders it within two seconds. Genuinely live inference from your terminal. The caveat is the 1–3 minute runtime — that is a long silence in a talk. Workable if you start the run and narrate over it; have the Tier A result already loaded as the fallback.
-- **Tier B — Always-on GPU service.** Only worth it if you later want instant live runs. A rented cloud GPU is ~$0.20–0.50/hour. Not needed for this demo.
+**Tier recommendation:**
 
-**Cloud fallback for precompute** if the MPS path fights back: a rented 24 GB
-GPU (RunPod, Vast.ai) for one hour runs the repo's instructions unmodified and
-costs under a euro. Note that Colab's free T4 is 16 GB, which is too tight for
-8B at bf16.
+- **Tier A — Precompute on the MacBook (primary).** Run `tools/precompute.py` ahead of the session, commit the JSON to `data/model/`, web app serves it instantly. No GPU present at demo time, nothing to fail in front of an audience. This is not faking: same weights, same prompt, same output, computed Tuesday instead of during the talk. The dishonest version would be hand-drawing plausible paths — don't do that, run the real model early.
+- **Tier C — Laptop-in-the-loop (now a first-class demo element).** `tools/push_result.py` POSTs a local run to the web app, which is polling and renders it within two seconds. Genuinely live inference from your terminal, on a new image the audience picks. The 1–3 minute wait is workable if you narrate over it — it is arguably *better* theatre than an instant result, because the audience watches a real model think. Keep the Tier A result loaded as the silent fallback.
+- **Tier B — Always-on GPU service.** Not needed. Only worth building if this later becomes something people use unattended.
+
+**Fallback ladder**, in order, if the MPS path misbehaves:
+
+1. `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0` to lift the allocator cap.
+2. `device_map="cpu"` — slow but certain, and 32 GB is sufficient.
+3. A rented 24 GB cloud GPU (RunPod, Vast.ai) for one hour, running the repo's instructions unmodified, for under a euro.
 
 **First task of Phase 4** is validating `predict_mps.py` end to end on your
 machine, because this is the one part of the plan that cannot be verified from
@@ -492,7 +500,8 @@ built first.
 | Risk | Mitigation |
 |---|---|
 | Venue wifi blocks or throttles | Precomputed data is local to the server; capture degrades but display still works. Have screenshots as a final fallback |
-| MPS inference path fails on the Mac | Rent a 24 GB cloud GPU for an hour (under a euro) and run the repo's instructions unmodified |
+| Live Tier C run is slow or stalls mid-talk | Tier A result is already loaded; switch layers and carry on. Never make the live run the only path to a visible result |
+| MPS inference path fails on the Mac | Fallback ladder in §4.2 — allocator cap, then CPU, then a rented GPU. Slow is acceptable, so this cannot become a blocker |
 | GPU unavailable on the day | Tier A means the GPU is never needed on the day |
 | Very low participation | Seed with a couple of your own responses so the heatmap is not empty; human-to-human ceiling needs ≥ 6 responses to mean anything |
 | Poor human/model agreement | Reframe per §1.1 — it is a finding, not a failure. Prepare that line in advance |
@@ -513,15 +522,35 @@ rather than a demonstration, ethics approval and a consent screen apply.
 
 ## 10. Decisions
 
-**Resolved**
+All resolved. Nothing blocks Phase 1.
 
-1. **Hosting — Zenbox, PHP.** Exact PDO driver unknown, so storage is abstracted over SQLite and MySQL (§4.1). No longer blocking. Run `tools/check_host.php` when convenient to pick the implementation.
-2. **GPU — M4 MacBook, 32 GB.** Enough memory, but vLLM is not viable on Apple Silicon; the plan is a transformers + MPS script reusing the repo's prompt builder (§4.2). Precompute is the primary path; laptop-in-the-loop is available with a 1–3 minute runtime.
-3. **Taps per participant — 5.** Comparison is AOI-based, so tap count need not match the model's fixation count. Run the model at `--num-fixations 5` for metrics, and at 8 for the visually richer overlay.
-4. **AOIs — derived, not gridded** (§7). Semantic AOIs for the narrative, split-half derivation for the statistics.
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | **Hosting** | Zenbox, PHP. PDO driver unknown, so storage is abstracted over SQLite and MySQL (§4.1). `tools/check_host.php` decides which — run it whenever, it is not on the critical path |
+| 2 | **Model runtime** | M4 MacBook, 32 GB. transformers + MPS, reusing the repo's prompt builder (§4.2). **Slow is acceptable**, so the fallback ladder ends in plain CPU and the model can always be run |
+| 3 | **Taps per participant** | 5. Comparison is AOI-based, so counts need not match. Model at 5 fixations for metrics, 8 for the display overlay |
+| 4 | **AOI definition** | Derived, not gridded (§7). Semantic AOIs for the narrative, split-half derivation for the statistics, avoiding the circularity trap in §7.1 |
+| 5 | **Stimulus images** | 4 to start: the capybara street scene, one control (§7 / below), two spares. Precompute cost is ~2 min per image per config, so this is cheap to expand |
+| 6 | **Participant sees results?** | Projector-only. During a talk, a result on their own phone competes with the screen you want them watching. A "view results" state is a small later addition if wanted |
+| 7 | **Control image** | Yes. A comparable street scene with no semantic violation, so the capybara-sign effect is *visible by contrast* rather than asserted. This is the difference between a claim and a demonstration |
 
-**Still open** — none of these block Phase 1:
+### 10.1 What to do first
 
-5. **How many stimulus images** in a session? Drives precompute time (~2 min per image per config, minus the shared-prefill saving).
-6. **Should participants see results on their own phone** after submitting, or only on the projected screen? Spec currently assumes projector-only.
-7. **A second control image** without a semantic violation, to contrast against the capybara sign? Recommended — it makes the effect visible rather than asserted.
+1. Run `tools/check_host.php` on Zenbox, note the verdict, delete the file.
+2. Choose and photograph the control image (§10, decision 7) — a street scene matching the capybara shot in composition but with an ordinary sign.
+3. Confirm the participant URL reaches your Zenbox host from a phone on mobile data, not just your laptop.
+
+Items 2 and 3 are the ones with a lead time. Item 1 takes two minutes.
+
+---
+
+## 11. Approval
+
+Spec approved by the owner on 2026-09-19 covering: the two-part architecture
+(§3), PHP + abstracted storage (§4.1), transformers + MPS with slow runtime
+accepted (§4.2), the four views (§5), derived AOIs with split-half scoring
+(§7), and the seven-phase build order (§8).
+
+Build proceeds from Phase 1. Phases 1–3 deliver the complete participant and
+presenter experience with no GPU involved; Phase 4 is the first point at which
+anything depends on model inference working on the MacBook.
