@@ -612,3 +612,21 @@ shared hosting to Python + FastAPI + SQLite hosted in a GitHub Codespace
 Build proceeds from Phase 1. Phases 1–3 deliver the complete participant and
 presenter experience with no GPU involved; Phase 4 is the first point at which
 anything depends on model inference working on the MacBook.
+
+### 11.1 Build completed, 2026-09-19
+
+All phases are implemented and pushed. Three decisions in this spec changed
+during the build, each recorded in the commit that made it:
+
+- **§4.1 stack.** PHP on Zenbox was dropped for Python + FastAPI + SQLite in a
+  Codespace, which also hosts the live session (§4.3). The deciding factor was
+  §7: mean-shift, Spearman and NSS need scipy and scikit-learn.
+- **§7 bandwidth.** The spec sets the AOI cluster width at 5% of the image
+  *diagonal*. Coordinates are normalised to a unit square whose diagonal is
+  sqrt(2), so the figure is 0.0707, not 0.05. The bare value over-segmented.
+- **§7 tie inflation.** Rank correlation counts a shared zero as agreement, so
+  areas only one side visited inflate it. The report now surfaces that count.
+
+**Outstanding:** `tools/predict_mps.py` has not been run against the real
+model, there being no GPU in the build environment. It is the only unverified
+component and the first thing to validate on the MacBook.

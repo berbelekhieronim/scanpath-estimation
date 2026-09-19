@@ -341,6 +341,8 @@ def get_model_run(image_id: int, mode: str, target: Optional[str],
         return None
     payload = json.loads(row["coords_json"])
     payload["run_id"] = row["id"]
+    # Run files written before prompt_kind existed carry a trained prompt.
+    payload.setdefault("prompt_kind", "trained")
     return payload
 
 

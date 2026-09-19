@@ -86,6 +86,10 @@ def main():
     ap.add_argument("--device", default="auto", choices=["auto", "mps", "cuda", "cpu"])
     ap.add_argument("--dtype", default="bfloat16",
                     choices=["bfloat16", "float16", "float32"])
+    ap.add_argument("--prompt", help=(
+        "EXPERIMENTAL. Your own prompt text instead of the trained template. "
+        "Off-distribution; output quality is unvalidated and the run is "
+        "badged in the UI."))
     ap.add_argument("--save", help="Also write the run JSON here")
     args = ap.parse_args()
 
@@ -107,7 +111,12 @@ def main():
         from PIL import Image
 
         n = args.num_fixations
-        prompt_text = gp.build_prompt(args.mode, n, args.target)
+        if args.prompt:
+            prompt_text, prompt_kind = args.prompt, "custom"
+            print("*** EXPERIMENTAL PROMPT — off the trained distribution, "
+                  "quality unvalidated. ***")
+        else:
+            prompt_text, prompt_kind = gp.build_prompt(args.mode, n, args.target), "trained"
         adapter = ("combined_adapter" if args.mode == "freeview"
                    else "visual_search_adapter")
         device = predict_mps.pick_device(args.device)
@@ -131,6 +140,7 @@ def main():
             "mode": args.mode, "target": args.target, "n_fixations": n,
             "seed": args.seed, "temperature": args.temperature,
             "prompt_text": prompt_text,
+            "prompt_kind": prompt_kind,
             "scanpath_grid": samples[0],
             "scanpath_norm": gp.grid_to_norm(samples[0]),
             "samples_grid": samples,

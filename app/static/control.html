@@ -250,7 +250,16 @@ function renderModelStatus(model) {
   const r = model.run;
   const n = (r.samples_norm || []).length;
   const synthetic = r.source === 'synthetic';
+  const custom = r.prompt_kind === 'custom';
   el.innerHTML =
+    (custom ? `<div class="notice warn" style="margin-bottom:10px">
+        <strong>Experimental prompt</strong> — this run used custom text rather
+        than the trained template, so its quality is unvalidated. The display
+        shows a warning strip.
+        <details style="margin-top:8px"><summary style="cursor:pointer">Show prompt</summary>
+        <pre style="white-space:pre-wrap; font-size:.75rem; margin:8px 0 0">${
+          (r.prompt_text || '').replace(/[<>&]/g, (c) =>
+            ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</pre></details></div>` : '') +
     (synthetic ? `<div class="notice err" style="margin-bottom:10px">
         <strong>SYNTHETIC placeholder data</strong> — not model output. The
         display shows a warning banner while this layer is on.</div>` : '') +

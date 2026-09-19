@@ -396,6 +396,7 @@ class PushedRun(BaseModel):
     seed: Optional[int] = None
     temperature: Optional[float] = None
     prompt_text: Optional[str] = None
+    prompt_kind: str = "trained"     # "trained" | "custom" (off-distribution)
     scanpath_grid: Optional[list[list[int]]] = None
     samples_norm: Optional[list[list[list[float]]]] = None
     samples_grid: Optional[list[list[list[int]]]] = None

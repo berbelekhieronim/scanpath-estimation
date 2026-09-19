@@ -8,7 +8,10 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** Phases 1–6 complete — the build order in the spec is finished. Participants join by QR and tap; the presenter
+**Status:** All phases complete. Full session rehearsed end to end in a browser:
+phones join by QR, tap and submit; the presenter reveals the heatmap, paths,
+model overlay and agreement metrics; moving to the next image resets cleanly and
+the earlier round survives in the export. Participants join by QR and tap; the presenter
 screen shows the aggregate live, overlays the model's predicted scanpath, and
 reports agreement against baselines and a human-to-human ceiling.
 
@@ -172,3 +175,32 @@ and participant responses are the only thing here that cannot be regenerated.
 
 The export omits user-agent strings — the participant screen promises
 anonymity, and a UA string is identifying.
+
+## Experimental prompts
+
+The adapter was fine-tuned on two exact prompt templates, so those are the
+validated path. You can supply your own text instead:
+
+```bash
+python tools/predict_mps.py --repo ../DeepGaze3.5-VL --image photo.jpg \
+    --prompt "Where would a hurried driver look first? Give 5 points as (x,y)."
+```
+
+The model always returns coordinates — it never errors on an odd prompt — but
+off-template quality is unvalidated and degrades silently. Runs made this way
+are tagged `prompt_kind: "custom"`, the display shows a warning strip, and
+`/control` lets you expand the exact prompt used.
+
+The strongest supported contrast needs no custom prompting: run free-viewing,
+then `--mode search --target car`, and show the path reorganise toward the
+vehicle.
+
+## What has not been verified
+
+`tools/predict_mps.py` has never been run against the real model — it was
+written in an environment with no GPU. Everything downstream of it is verified
+against synthetic data, and the prompt templates are checked byte-for-byte
+against upstream. **Validating the inference path on your MacBook is the first
+thing to do**, and it is the only remaining unknown in the project.
+
+Run the tests with `pip install -r requirements-dev.txt && pytest` (107 tests).

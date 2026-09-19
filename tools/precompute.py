@@ -179,6 +179,7 @@ def main():
             "seed": args.seed,
             "temperature": args.temperature,
             "prompt_text": prompt_text,
+            "prompt_kind": "trained",
             "scanpath_grid": samples[0],
             "scanpath_norm": gp.grid_to_norm(samples[0]),
             "samples_grid": samples,

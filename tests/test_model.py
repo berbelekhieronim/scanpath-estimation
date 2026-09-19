@@ -169,3 +169,29 @@ def test_prompt_templates_and_parser():
     assert gp.parse_scanpath("no coordinates here") == []
     assert gp.grid_to_norm([(50, 25)]) == [[0.5, 0.25]]
     assert len(gp.COCO_SEARCH18_TARGETS) == 18
+
+
+# --- experimental prompts (Phase 7) ----------------------------------------
+
+def test_prompt_kind_defaults_to_trained(env):
+    (env / "model" / "a.json").write_text(json.dumps(make_run()))
+    with start(env) as c:
+        c.post("/api/model/push", json={
+            "image": "a.jpg", "mode": "freeview", "n_fixations": 3,
+            "scanpath_norm": [[0.1, 0.2]],
+        }, headers=AUTH)
+        assert c.get("/api/model").json()["run"]["prompt_kind"] == "trained"
+
+
+def test_custom_prompt_kind_survives_the_round_trip(env):
+    """The display's experimental warning strip depends on this."""
+    with start(env) as c:
+        c.post("/api/model/push", json={
+            "image": "a.jpg", "mode": "freeview", "n_fixations": 3,
+            "scanpath_norm": [[0.1, 0.2]],
+            "prompt_kind": "custom",
+            "prompt_text": "where would a curious person glance?",
+        }, headers=AUTH)
+        run = c.get("/api/model").json()["run"]
+        assert run["prompt_kind"] == "custom"
+        assert "curious person" in run["prompt_text"]

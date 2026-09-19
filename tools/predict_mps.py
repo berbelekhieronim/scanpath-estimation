@@ -137,6 +137,12 @@ def main():
     ap.add_argument("--dtype", default="bfloat16",
                     choices=["bfloat16", "float16", "float32"])
     ap.add_argument("--max-new-tokens", type=int, default=None)
+    ap.add_argument("--prompt", help=(
+        "EXPERIMENTAL. Replace the trained prompt with your own text. The "
+        "adapter was fine-tuned on two exact templates; anything else is "
+        "off-distribution. The model will still return coordinates — it "
+        "always does — but their quality is unvalidated and degrades "
+        "silently. Runs made this way are badged in the UI."))
     ap.add_argument("--output", help="Write result JSON here")
     args = ap.parse_args()
 
@@ -151,7 +157,17 @@ def main():
 
     n = args.num_fixations or (8 if args.mode == "freeview" else 3)
     max_new = args.max_new_tokens or max(64, 16 * n + 16)
-    prompt_text = gp.build_prompt(args.mode, n, args.target)
+
+    if args.prompt:
+        prompt_text = args.prompt
+        prompt_kind = "custom"
+        print("\n*** EXPERIMENTAL PROMPT — off the trained distribution. ***\n"
+              "*** Output quality is unvalidated. Do not present this as   ***\n"
+              "*** the model's validated prediction.                       ***\n",
+              file=sys.stderr)
+    else:
+        prompt_text = gp.build_prompt(args.mode, n, args.target)
+        prompt_kind = "trained"
 
     from PIL import Image
     image = Image.open(args.image).convert("RGB")
@@ -191,6 +207,7 @@ def main():
         "seed": args.seed,
         "temperature": args.temperature,
         "prompt_text": prompt_text,
+        "prompt_kind": prompt_kind,
         "scanpath_grid": samples_grid[0],
         "scanpath_norm": gp.grid_to_norm(samples_grid[0]),
         "samples_grid": samples_grid,

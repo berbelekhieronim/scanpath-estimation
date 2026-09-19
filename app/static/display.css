@@ -96,3 +96,12 @@ body.has-synthetic .display { padding-top: 46px; }
 .metric.headline-metric .value { color: var(--accent); }
 .analysis .note { color: var(--muted); font-size: 0.8125rem; margin-top: 10px; }
 .analysis .unavailable { color: var(--warn); }
+
+/* An off-distribution prompt is a weaker claim than a trained one, and the
+   audience cannot tell from the picture. Say so on the screen. */
+.experimental-warning {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 49;
+  background: var(--warn); color: #241a00; text-align: center;
+  padding: 6px 16px; font-weight: 700; font-size: 0.8125rem;
+}
+body.has-experimental .display { padding-bottom: 40px; }

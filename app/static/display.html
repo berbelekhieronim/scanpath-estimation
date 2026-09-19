@@ -95,6 +95,18 @@ function renderModel(run, show) {
       stroke-linecap="round" vector-effect="non-scaling-stroke"/>` + dots;
 }
 
+function renderExperimentalWarning(run, show) {
+  const existing = document.querySelector('.experimental-warning');
+  const custom = show && run && run.prompt_kind === 'custom';
+  document.body.classList.toggle('has-experimental', !!custom);
+  if (!custom) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const el = document.createElement('div');
+  el.className = 'experimental-warning';
+  el.textContent = 'EXPERIMENTAL PROMPT — outside the model\u2019s trained templates, quality unvalidated';
+  document.body.appendChild(el);
+}
+
 function renderSyntheticWarning(run, show) {
   const existing = document.querySelector('.synthetic-warning');
   const isSynthetic = show && run && run.source === 'synthetic';
@@ -239,7 +251,7 @@ async function tick() {
   const signature = JSON.stringify([
     state.round_id, state.image.id, state.layers, data.count,
     data.paths.length && data.paths[data.paths.length - 1],
-    model.run && [model.run.run_id, model.run.source],
+    model.run && [model.run.run_id, model.run.source, model.run.prompt_kind],
     state.layers.analysis && stats.ok && stats.model_vs_human,
   ]);
   const changed = signature !== lastSignature;
@@ -269,6 +281,7 @@ async function tick() {
     renderPaths(data.paths, state.layers.paths);
     renderModel(model.run, state.layers.model);
     renderSyntheticWarning(model.run, state.layers.model);
+    renderExperimentalWarning(model.run, state.layers.model);
     renderAnalysis(stats, state.layers.analysis);
     renderLegend(state.layers, data.count, model.run);
   }
