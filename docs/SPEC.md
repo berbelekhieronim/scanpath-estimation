@@ -115,6 +115,7 @@ This is not a detail to engineer around — it is the fork in the road:
 
 - FTP shared hosting: PHP, no GPU, no long-running process. Cannot run the model. Ever.
 - GitHub Codespaces: CPU-only on all standard machine types. Cannot run an 8B VLM at usable speed. GPU Codespaces exist but are not in the default offering.
+- Your M4 MacBook has the memory but not CUDA, so the repo's own instructions do not run on it either (§4.2).
 - vLLM engine startup is minutes, not milliseconds. Even *with* a GPU, this can never be a cold-start-per-request web endpoint. It needs a warm, persistent process.
 
 Therefore the system **must** split into two independently deployable pieces:
@@ -139,69 +140,111 @@ problems, CUDA OOM, and HuggingFace being slow.
 
 ## 4. Recommended build
 
-### 4.1 Web app: PHP + SQLite, served from your FTP host
+### 4.1 Web app: PHP, with a storage layer that works either way
 
-**Recommendation.** Nearly every FTP-based shared host runs PHP with SQLite
-compiled in. That gives you: no build step, no Node process to keep alive, no
-container, drag-and-drop deployment over the FTP client you already use, and a
-stable URL you control. For a room of 30 people tapping an image, this is
+**Recommendation.** Zenbox runs PHP, which is the only thing that must be true.
+Frontend is a single static HTML page per view with vanilla JS and inline SVG
+overlays — no framework, no bundler, no npm, no Node process to keep alive.
+Deployment is a drag-and-drop over the FTP client you already use. Total payload
+under 50 KB excluding images. For a room of 30 people tapping an image this is
 comfortably sufficient and has the fewest moving parts of any option.
 
-Frontend is a single static HTML page per view with vanilla JS and inline SVG
-overlays — no framework, no bundler, no npm. Total payload target under 50 KB
-excluding images. This is the fastest thing to make work correctly on an
-unpredictable mix of phones.
+**The SQLite question is unblocked, not answered.** Zenbox's PHP module list
+isn't publicly documented, so rather than block Phase 1 on finding out, storage
+goes behind a thin `Storage` interface with two implementations:
 
-*Prerequisite to confirm before building:* that your host has PHP ≥ 8.0 with
-`pdo_sqlite`, and a writable directory outside the web root. A three-line
-`phpinfo()` upload settles it. **If the host is static-only (no PHP), fall back
-to Option B.**
+- `SqliteStorage` — zero setup, a single file, preferred if `pdo_sqlite` is present.
+- `MysqlStorage` — same schema, used if only `pdo_mysql` is available. Every
+  shared host that offers PHP offers MySQL/MariaDB, so this is the guaranteed
+  fallback.
 
-**Option B — Node/Express + SQLite on a small always-on host** (Fly.io, Render,
-Railway; free-to-cheap tiers). Better local development story, needs a real
-deploy pipeline. Choose this if PHP is unavailable or if you would rather work
-in JS.
+Both speak the same ~8 queries. The choice is one config line, decided once when
+you know which extension exists. This costs maybe an extra hour of work and
+removes an unknown from the critical path entirely.
+
+**To find out which:** upload `tools/check_host.php` to your Zenbox web root,
+open it in a browser, and it reports PHP version, which PDO drivers are
+available, whether the data directory is writable, and the upload limits. Delete
+it afterwards — it reveals server configuration.
+
+**Option B — Node/Express on a small always-on host** (Fly.io, Render, Railway)
+remains the alternative if you would rather work in JS, but with the storage
+layer abstracted there is no longer a reason to reach for it.
 
 **On Codespaces:** excellent for *developing* this, poor for *hosting* the live
-session. A forwarded port gives a long URL, requires the port be set public, and
-sleeps after idle timeout. Develop there, deploy to the FTP host.
+session — a forwarded port gives a long URL, must be set public, and sleeps after
+idle timeout. Develop there, deploy to Zenbox.
 
-### 4.2 Model runner: precompute, with a live path available
+### 4.2 Model runner on an M4 MacBook: bypass vLLM
 
-Three tiers. **Tier A is the recommendation for the live session.**
+A 32 GB M4 MacBook is enough memory to run this, but **not by following the
+repo's instructions**. Two things are in the way:
 
-**Tier A — Precompute (recommended).** Before the session, run every image
-through the model on a GPU machine for each configuration you plan to show
-(free-viewing, plus each search target, plus N seeds for virtual observers).
-Commit the resulting JSON to `data/model/`. The web app reads static JSON and
-renders instantly.
+1. **vLLM's standard install requires CUDA**, which does not exist on Apple
+   Silicon. Running it on a Mac means either the community
+   [`vllm-metal`](https://github.com/vllm-project/vllm-metal) plugin (MLX
+   backend) or an experimental CPU build from source — neither with any
+   guarantee of supporting InternVL3.5 multimodal input plus a merged LoRA.
+2. `requirements.txt` pins `vllm==0.11.2` and `torch==2.9.0`, a CUDA-shaped
+   dependency set.
 
-This is worth being precise about, because it touches your "or I could fake it"
-remark: **precomputing is not faking.** It is the identical model, identical
-weights, identical prompt, producing identical output — just computed on
-Tuesday rather than during the talk. The only thing you lose is the theatre of
-the progress bar. What you gain is a demo that cannot fail in front of an
-audience because of a CUDA OOM or a slow download. Say out loud that the
-scanpaths were generated ahead of time and nothing about the claim weakens.
+**The way through: don't use vLLM at all.** vLLM is doing exactly one job here —
+fast batched serving — and this workload is one image at a time producing ~60
+tokens of output. None of that speed is needed.
 
-The genuinely dishonest version would be hand-drawing plausible paths. Don't do
-that. Run the real model; run it early.
+Crucially, the repo makes this easy in a way worth pointing out:
 
-**Tier B — Live inference service.** A ~100-line FastAPI wrapper holding the
-vLLM engine warm, exposed over HTTPS with a shared-secret header, called by the
-web app's "Run model" button. Genuinely live. Requires an always-on GPU: your
-own card with ≥16 GB VRAM, or a rented cloud GPU at roughly $0.20–0.50/hour.
-Build this *after* Tier A works, as an upgrade, never as the only path.
+- `FewShotPromptBuilder.build_prompt()` is ~15 lines and touches no vLLM code —
+  it builds a standard `messages` list and calls `processor.apply_chat_template()`.
+- `parse_scanpath_reduced()` is a regex over `(x, y)` tuples.
+- **Every `vllm` import in `evaluate_vllm_unified.py` is lazy** (inside function
+  bodies, never at module level).
 
-**Tier C — Laptop-in-the-loop.** You run `predict_scanpath.py` from your
-terminal during the talk; a small `push_result.py` helper POSTs the JSON to the
-web app, which is polling and renders it within two seconds. This is your
-"run it from my terminal and show them" idea, and it is fully legitimate — the
-inference is real and happening live. It gives you the theatre of Tier B with
-the hardware requirements of a laptop with a decent GPU, and it degrades
-gracefully: if it fails, the Tier A precomputed path is already sitting there.
+So the module can be imported on a Mac with no vLLM installed, and the exact
+prompt-construction and parsing code can be reused verbatim. Only the engine
+gets swapped:
 
-**Ship Tier A and Tier C. Treat Tier B as a later upgrade.**
+```
+torch (MPS) + transformers + peft
+  ├─ AutoProcessor.from_pretrained("OpenGVLab/InternVL3_5-8B-HF")
+  ├─ AutoModelForImageTextToText.from_pretrained(..., dtype=torch.bfloat16)
+  ├─ PeftModel.from_pretrained(model, "model/combined_adapter").merge_and_unload()
+  ├─ FewShotPromptBuilder(processor).build_prompt(...)   ← reused as-is
+  ├─ model.generate(..., max_new_tokens=96)
+  └─ parse_scanpath_reduced(text)                        ← reused as-is
+```
+
+This becomes `tools/predict_mps.py`. It is a genuinely small script, and because
+it reuses their prompt builder it produces the same prompt string the model was
+trained on — which is the part that actually determines output quality.
+
+**Memory.** 8B at bf16 ≈ 16 GB of weights. 32 GB unified memory fits that with
+room for activations, but InternVL tiles images into up to ~3000 vision tokens,
+so the prefill is the peak. If it OOMs, `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0`
+lifts the allocator cap. Expect roughly **1–3 minutes per image**, dominated by
+prefill, not decode.
+
+**The optimisation that makes precompute practical.** The virtual-observer
+samples (§6.4) all share one image and one prompt, so the expensive prefill is
+identical across them. Generating them in a single `generate()` call with
+`num_return_sequences=N` pays the prefill **once**. Ten virtual observers then
+cost barely more than one. A realistic precompute of 5 images × 3 configs is
+~15 prefills, so **half an hour on your MacBook**, not an afternoon.
+
+**Revised tier recommendation:**
+
+- **Tier A — Precompute on the MacBook (recommended).** Run `tools/precompute.py` overnight or over a coffee, commit the JSON to `data/model/`, web app serves it instantly. No GPU present at demo time, nothing to fail in front of an audience. This is not faking: same weights, same prompt, same output, computed Tuesday instead of during the talk. The dishonest version would be hand-drawing plausible paths — don't do that, run the real model early.
+- **Tier C — Laptop-in-the-loop (available, with a caveat).** `tools/push_result.py` POSTs a local run to the web app, which is polling and renders it within two seconds. Genuinely live inference from your terminal. The caveat is the 1–3 minute runtime — that is a long silence in a talk. Workable if you start the run and narrate over it; have the Tier A result already loaded as the fallback.
+- **Tier B — Always-on GPU service.** Only worth it if you later want instant live runs. A rented cloud GPU is ~$0.20–0.50/hour. Not needed for this demo.
+
+**Cloud fallback for precompute** if the MPS path fights back: a rented 24 GB
+GPU (RunPod, Vast.ai) for one hour runs the repo's instructions unmodified and
+costs under a euro. Note that Colab's free T4 is 16 GB, which is too tight for
+8B at bf16.
+
+**First task of Phase 4** is validating `predict_mps.py` end to end on your
+machine, because this is the one part of the plan that cannot be verified from
+here. Everything upstream of it is independent of the outcome.
 
 ---
 
@@ -269,6 +312,10 @@ scanpath-estimation/
 │   ├── display.php              # presenter screen
 │   ├── control.php              # presenter controls (token-gated)
 │   ├── admin.php                # image management
+│   ├── lib/
+│   │   ├── storage.php          # Storage interface
+│   │   ├── storage_sqlite.php   # pdo_sqlite implementation
+│   │   └── storage_mysql.php    # pdo_mysql fallback
 │   ├── api/
 │   │   ├── markers.php          # POST tap data, GET aggregate
 │   │   ├── state.php            # GET/POST active image + layer state
@@ -283,6 +330,8 @@ scanpath-estimation/
 │   ├── app.sqlite
 │   └── model/                   # precomputed scanpaths, one JSON per run
 ├── tools/
+│   ├── check_host.php           # one-off Zenbox capability probe (delete after use)
+│   ├── predict_mps.py           # single-image inference on Apple Silicon (§4.2)
 │   ├── precompute.py            # batch-run the model over all images
 │   ├── push_result.py           # Tier C: POST a local run to the web app
 │   └── analysis.py              # reference implementation of §7 metrics
@@ -348,28 +397,66 @@ visual. `precompute.py` should do this by default.
 
 ---
 
-## 7. Agreement analysis
+## 7. AOI definition and agreement analysis
 
-Reported in the Layer 3 panel. Each metric answers a different question, and
-none of them treats either side as truth.
+With 20+ participants × 5 taps each you have ~100 human points per image, which
+is enough to derive areas of interest from the data rather than imposing a grid.
+This section replaces the fixed-grid approach.
 
-**Spatial overlap — do they attend to the same regions?**
-- Divide the image into an AOI grid (5 × 5 default, configurable).
-- Human vector: proportion of taps per cell. Model vector: proportion of model fixations per cell, pooled across virtual observers.
-- **Spearman ρ** between the two vectors — robust, interpretable, the headline number.
-- **Normalised Scanpath Saliency (NSS)** of human tap locations against the model's fixation density map. Standard in the literature, so it is the comparable figure.
+### 7.1 The circularity trap — read this before choosing a method
 
-**Sequence similarity — do they go in the same order?**
-- Encode each path as a string of AOI cell labels, compare with **Levenshtein distance**, normalised by length.
-- **ScanMatch** (Cristino et al., 2010) if you want the established method — substitution matrix weighted by inter-cell distance.
+If AOIs are derived by clustering human taps, and you then measure *"do humans
+and the model hit the same AOIs"*, **the humans score near-perfectly by
+construction**. The AOIs were drawn around their own points. Any comparison on
+that basis is rigged in the humans' favour and the resulting number means
+nothing.
 
-**Baselines — is the agreement meaningful?** This is the part that makes the
-analysis credible rather than decorative. Report alongside:
-- **Random baseline:** uniformly sampled points, same count.
-- **Centre-bias baseline:** a 2-D Gaussian at image centre. This one matters — centre bias alone explains a surprising amount of agreement in any fixation data, and a model that only beat *random* would not be impressive.
-- **Human-to-human:** split participants into two halves, score one against the other. This is the ceiling. If model-vs-human approaches human-vs-human, the claim "the machine does this as well as you do" is quantitatively supported — and that sentence is your whole talk.
+This is easy to miss and would quietly invalidate the headline claim, so AOIs
+must come from a source that does not privilege either side. Three valid
+options:
 
-The human-to-human ceiling is the most valuable number on the screen. Compute it.
+| Method | How | Use for |
+|---|---|---|
+| **A. Semantic** | Hand-drawn boxes around objects: the capybara sign, the car, the pedestrian, the crossing, the traffic light | **The narrative.** Named AOIs on screen, independent of both sides, most legible to an audience |
+| **B. Pooled clustering** | Mean-shift over human taps ∪ model fixations together | **The data-driven number.** Neither side privileged |
+| **C. Split-half** | Derive AOIs from a random half of participants; score the other half *and* the model against them | **The rigorous version.** Yields the human-to-human ceiling for free |
+
+**Recommendation: A for the talk, C for the numbers.** Semantic AOIs let you say
+"humans ranked the capybara sign first; so did the model" — concrete and
+memorable. Split-half gives you the defensible statistic behind it. Implement B
+as well since it's ~20 lines once C exists.
+
+For B and C, use **mean-shift** clustering: it doesn't require specifying the
+number of clusters, and its bandwidth has a principled setting — roughly 5% of
+the image diagonal, approximating 2° of visual angle at typical viewing
+distance, i.e. about one foveal window. Expect 4–8 AOIs on a scene like the
+street photo.
+
+### 7.2 Metrics
+
+Taps and fixations need not be equal in number — the spatial metrics below are
+count-independent. Only the sequence metrics care, and they are length-normalised.
+
+**Spatial — do they attend to the same regions?**
+- Per-AOI proportion of human taps vs. per-AOI proportion of model fixations (pooled over virtual observers).
+- **Spearman ρ** across AOIs — the headline number.
+- **Rank agreement of the top AOI** — the single most legible line on the screen: *"humans ranked the sign #1, the model ranked it #1."*
+- **NSS** of human tap locations against the model's fixation density map — the figure comparable to published work.
+
+**Sequential — do they go in the same order?**
+- Encode each path as a string of AOI labels; compare with **Levenshtein distance**, normalised by length.
+- **ScanMatch** (Cristino et al., 2010) for the established method, with a substitution matrix weighted by inter-AOI distance.
+- **AOI transition matrices**, human vs. model, displayed side by side. This visualises well and shows sequence structure a single number hides.
+
+**Baselines — is the agreement meaningful?** This is what makes the analysis
+credible rather than decorative. Report alongside every figure above:
+- **Random** — uniformly sampled points, same count.
+- **Centre-bias** — a 2-D Gaussian at image centre. This one matters: centre bias alone explains a surprising share of agreement in any fixation data, and beating only *random* would not be impressive.
+- **Human-to-human** (the split-half from method C) — the ceiling. If model-vs-human approaches human-vs-human, then *"the machine predicts this as well as you do"* is quantitatively supported, and that sentence is the whole talk.
+
+The human-to-human ceiling is the most valuable number you will put on screen.
+It needs roughly ≥ 6 responses per half to be stable, so ≥ 12 participants; at
+20+ you are fine.
 
 ---
 
@@ -382,8 +469,8 @@ Each phase ends somewhere demonstrable.
 | **1** | Repo scaffold, SQLite schema, image asset loader, `/admin` | Images visible in a list |
 | **2** | `/` capture view — tap, order, undo, submit. Phone + desktop | **A phone can post markers.** The non-negotiable path works |
 | **3** | `/display` + `/control` — heatmap, ordered paths, layer toggles, image switch, live poll | Full human half of the demo runs end to end |
-| **4** | `tools/precompute.py` + model layer rendering | Model scanpaths overlay on the image |
-| **5** | `tools/analysis.py` + Layer 3 panel with baselines | Numbers on screen, including the human-to-human ceiling |
+| **4** | `tools/predict_mps.py` validated on the MacBook, then `precompute.py` + model layer rendering | Model scanpaths overlay on the image |
+| **5** | `tools/analysis.py` — AOI derivation + metrics + baselines, Layer 3 panel | Numbers on screen, including the human-to-human ceiling |
 | **6** | `tools/push_result.py` (Tier C live path) | Laptop inference appears on the projector |
 | **7** | Optional: Tier B live service; free-text prompt panel | — |
 
@@ -405,6 +492,7 @@ built first.
 | Risk | Mitigation |
 |---|---|
 | Venue wifi blocks or throttles | Precomputed data is local to the server; capture degrades but display still works. Have screenshots as a final fallback |
+| MPS inference path fails on the Mac | Rent a 24 GB cloud GPU for an hour (under a euro) and run the repo's instructions unmodified |
 | GPU unavailable on the day | Tier A means the GPU is never needed on the day |
 | Very low participation | Seed with a couple of your own responses so the heatmap is not empty; human-to-human ceiling needs ≥ 6 responses to mean anything |
 | Poor human/model agreement | Reframe per §1.1 — it is a finding, not a failure. Prepare that line in advance |
@@ -423,12 +511,17 @@ rather than a demonstration, ethics approval and a consent screen apply.
 
 ---
 
-## 10. Open decisions
+## 10. Decisions
 
-Needed before Phase 1:
+**Resolved**
 
-1. **Does your FTP host run PHP ≥ 8 with `pdo_sqlite`?** Decides web stack (§4.1). A `phpinfo()` upload answers it.
-2. **Do you have a GPU with ≥ 16 GB VRAM**, on your laptop or otherwise? Decides whether Tier C is available, and how precomputation gets run.
-3. **How many taps per participant?** Spec assumes 5. The model defaults to 8 fixations for free-viewing; matching the counts makes sequence comparison cleaner.
-4. **How many stimulus images** in a session? Affects precompute time.
-5. **Should participants see the results on their own phone** after submitting, or only on the projected screen? Spec currently assumes projector-only.
+1. **Hosting — Zenbox, PHP.** Exact PDO driver unknown, so storage is abstracted over SQLite and MySQL (§4.1). No longer blocking. Run `tools/check_host.php` when convenient to pick the implementation.
+2. **GPU — M4 MacBook, 32 GB.** Enough memory, but vLLM is not viable on Apple Silicon; the plan is a transformers + MPS script reusing the repo's prompt builder (§4.2). Precompute is the primary path; laptop-in-the-loop is available with a 1–3 minute runtime.
+3. **Taps per participant — 5.** Comparison is AOI-based, so tap count need not match the model's fixation count. Run the model at `--num-fixations 5` for metrics, and at 8 for the visually richer overlay.
+4. **AOIs — derived, not gridded** (§7). Semantic AOIs for the narrative, split-half derivation for the statistics.
+
+**Still open** — none of these block Phase 1:
+
+5. **How many stimulus images** in a session? Drives precompute time (~2 min per image per config, minus the shared-prefill saving).
+6. **Should participants see results on their own phone** after submitting, or only on the projected screen? Spec currently assumes projector-only.
+7. **A second control image** without a semantic violation, to contrast against the capybara sign? Recommended — it makes the effect visible rather than asserted.
