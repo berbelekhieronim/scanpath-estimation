@@ -54,8 +54,10 @@ async def lifespan(app: FastAPI):
     if not images:
         print("  none yet — drop image files into data/images/ and restart,")
         print("  or use the Rescan button in /admin")
-    print(f"\n  participant:    /")
-    print(f"  presenter:      /display")
+    print(f"\n  START HERE:     /start        <- links to every page")
+    print(f"\n  participant:    /            (what phones scan into)")
+    print(f"  join screen:    /qr          (project while people join)")
+    print(f"  display:        /display     (project during the demo)")
     print(f"  controls:       /control?k={token}")
     print(f"  admin:          /admin?k={token}")
     print(f"\n  control token:  {token}")
@@ -143,6 +145,11 @@ def page_qr():
     return _page("qr.html")
 
 
+@app.get("/start", include_in_schema=False)
+def page_start():
+    return _page("start.html")
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
@@ -166,6 +173,69 @@ def favicon():
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
+
+@app.get("/api/status")
+def api_status(request: Request):
+    """Everything the start page needs to say whether the app is ready.
+
+    Composed server-side so the start page is one request, and so the
+    readiness warnings are decided in one place rather than reimplemented in
+    the template.
+
+    Deliberately does NOT include the control token. The start page is
+    reachable by anyone who can reach the app, and the token is what stops a
+    participant clearing the display mid-session.
+    """
+    round_ = db.get_active_round()
+    image = db.get_image(round_["image_id"]) if round_ else None
+    images = db.list_images()
+    runs = db.list_model_runs()
+    synthetic = [r for r in runs if r["source"] == "synthetic"]
+    counts = db.count_responses(round_["id"]) if round_ else {"participants": 0,
+                                                              "markers": 0}
+    join = urls.public_base_url(request.base_url)
+    reachable = urls.is_reachable_by_others(join["url"])
+
+    warnings = []
+    if not images:
+        warnings.append({
+            "level": "error",
+            "text": "No images loaded. Put image files in data/images/, then "
+                    "press Rescan in Admin.",
+        })
+    if not reachable:
+        warnings.append({
+            "level": "error",
+            "text": f"The join address ({join['url']}) only works on this "
+                    f"machine. In a Codespace, set port 8000 to Public in the "
+                    f"Ports panel.",
+        })
+    if synthetic:
+        warnings.append({
+            "level": "warn",
+            "text": f"{len(synthetic)} synthetic placeholder run(s) loaded — "
+                    f"not model output. Delete data/model/*.json and run "
+                    f"precompute.py for real before a session.",
+        })
+    if images and not runs:
+        warnings.append({
+            "level": "warn",
+            "text": "No model runs yet. The model layer and the agreement "
+                    "metrics stay empty until you run precompute.py.",
+        })
+
+    return {
+        "join_url": join["url"],
+        "join_url_source": join["source"],
+        "join_url_reachable": reachable,
+        "images": {"count": len(images), "active": image},
+        "model_runs": {"count": len(runs), "synthetic": len(synthetic)},
+        "responses": counts,
+        "round_id": round_["id"] if round_ else None,
+        "layers": LAYERS.current(),
+        "warnings": warnings,
+    }
+
 
 @app.get("/api/images")
 def api_images():

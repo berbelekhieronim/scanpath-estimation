@@ -13,11 +13,16 @@ different URLs on it. Starting the server starts all of them at once.
 ```
         ONE process  (uvicorn app.main:app)
                  │
-    ┌────────┬───┴────┬──────────┬─────────┐
-    │        │        │          │         │
-    /      /qr    /display   /control   /admin
- phones  project  project    laptop     laptop
+   ┌──────┬──────┼────────┬──────────┬─────────┐
+   │      │      │        │          │         │
+/start    /    /qr    /display   /control   /admin
+ you    phones project project    laptop     laptop
 ```
+
+**Open `/start` first.** It lists every page with a description of who it is
+for, shows live status (images loaded, model runs, responses so far, the join
+address) and warns about anything not ready. Paste the control token there once
+and the presenter links unlock.
 
 The same applies to the analysis: it is **not a separate program you run**. It
 is a layer you switch on, recomputed from the database every two seconds.
@@ -36,14 +41,18 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 `--host 0.0.0.0` matters. Without it the server only listens on localhost and
 no phone can reach it.
 
-Leave that terminal running. It prints the control token and the URLs:
+Leave that terminal running. It prints the control token and the URLs, leading
+with `/start`:
 
 ```
   images found:   2
   model runs:     2
 
-  participant:    /
-  presenter:      /display
+  START HERE:     /start        <- links to every page
+
+  participant:    /            (what phones scan into)
+  join screen:    /qr          (project while people join)
+  display:        /display     (project during the demo)
   controls:       /control?k=C5ufh8ZJ4MwP
   admin:          /admin?k=C5ufh8ZJ4MwP
 
@@ -214,6 +223,7 @@ participant responses are the only thing here that cannot be regenerated.
 | Analysis says "no human responses yet" | Nobody has submitted in the current round |
 | Ceiling shows "—" | Fewer than 12 responses |
 | Display frozen | Check the terminal is still running and the Codespace has not idled out |
+| Not sure what is running | Open `/start` — it shows live status and warns about anything not ready |
 | Codespace idled out | Restart it (~30s). Data and URL survive. **Re-check the port is Public** |
 | Phones show an old image | They poll every few seconds; give it a moment |
 

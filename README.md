@@ -64,6 +64,7 @@ in `/admin`.
 
 | Route | Who | Notes |
 |---|---|---|
+| `/start` | **You** | **Start here** — links to every page, with live status |
 | `/` | Participants | Capture view — tap in order, undo, submit |
 | `/qr` | Projector | Full-screen QR code to join |
 | `/display` | Projector | Heatmap, individual paths, live response count |

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Start — scanpath-estimation</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .hero { margin-bottom: 26px; }
+  .hero h1 { margin: 0 0 6px; font-size: 1.5rem; }
+  .hero .sub { color: var(--muted); }
+
+  .status-strip {
+    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 22px;
+  }
+  .chip {
+    display: inline-flex; align-items: baseline; gap: 7px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 15px; font-size: 0.875rem;
+  }
+  .chip b { font-variant-numeric: tabular-nums; font-size: 1rem; }
+  .chip.good { border-color: var(--ok); }
+  .chip.bad { border-color: var(--danger); }
+
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+  .page-card {
+    display: flex; flex-direction: column; gap: 9px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 17px 19px;
+    text-decoration: none; color: inherit;
+    transition: border-color .12s, transform .12s;
+  }
+  .page-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .page-card .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .page-card .name { font-size: 1.0625rem; font-weight: 600; }
+  .page-card .who {
+    font-size: 0.6875rem; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 7px; white-space: nowrap;
+  }
+  .page-card .desc { color: var(--muted); font-size: 0.875rem; line-height: 1.45; }
+  .page-card .path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem; color: var(--accent);
+  }
+  .page-card.locked { opacity: .6; }
+  .page-card.locked .path { color: var(--warn); }
+
+  .warn-list { display: grid; gap: 10px; margin-bottom: 22px; }
+  .warn-item {
+    border-radius: var(--radius); padding: 12px 16px; font-size: 0.9375rem;
+    border: 1px solid var(--border); background: var(--surface);
+  }
+  .warn-item.error { border-color: var(--danger); }
+  .warn-item.warn { border-color: var(--warn); }
+
+  .token-box { margin-bottom: 22px; }
+  .join-line {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.875rem; word-break: break-all;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <h1>scanpath-estimation</h1>
+    <div class="sub">Everything running on this server. One process, several pages.</div>
+  </div>
+
+  <div class="status-strip" id="status"></div>
+  <div class="warn-list" id="warnings"></div>
+
+  <div class="card token-box" id="token-box">
+    <div style="margin-bottom:10px" id="token-msg">
+      Paste the control token to unlock the presenter pages. It is printed in
+      the server console at startup.
+    </div>
+    <div class="row">
+      <input type="password" id="token" placeholder="Control token" autocomplete="off">
+      <button class="primary" id="save">Unlock</button>
+      <button id="forget" style="display:none">Forget token</button>
+    </div>
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="card" style="margin-top:22px">
+    <div class="sub" style="margin-bottom:6px">Join address for participants</div>
+    <div class="join-line" id="join">…</div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TOKEN_KEY = 'scanpath_control_token';
+let token = localStorage.getItem(TOKEN_KEY) ||
+            new URLSearchParams(location.search).get('k') || '';
+
+const PAGES = [
+  { path: '/', name: 'Participant view', who: 'Phones',
+    desc: 'What people land on when they scan the QR. Tap five places in order, then submit.' },
+  { path: '/qr', name: 'Join screen', who: 'Projector',
+    desc: 'Full-screen QR code plus the join address. Show this while people are arriving.' },
+  { path: '/display', name: 'Presenter display', who: 'Projector',
+    desc: 'The heatmap, individual paths, model scanpath and agreement metrics. This is the screen the audience watches.' },
+  { path: '/control', name: 'Controls', who: 'Your laptop', locked: true,
+    desc: 'Turn layers on and off, switch image, configure and reload the model, start a fresh round.' },
+  { path: '/admin', name: 'Admin', who: 'Your laptop', locked: true,
+    desc: 'Rescan the images folder and choose which image is active.' },
+];
+
+function renderCards() {
+  $('cards').innerHTML = PAGES.map((p) => {
+    const needsToken = p.locked && !token;
+    const href = p.locked && token ? `${p.path}?k=${encodeURIComponent(token)}` : p.path;
+    return `<a class="page-card ${needsToken ? 'locked' : ''}" href="${href}" target="_blank" rel="noopener">
+        <div class="top">
+          <span class="name">${p.name}</span>
+          <span class="who">${p.who}</span>
+        </div>
+        <div class="desc">${p.desc}</div>
+        <div class="path">${p.path}${p.locked ? (token ? '?k=…' : '  — needs token') : ''}</div>
+      </a>`;
+  }).join('');
+}
+
+function renderTokenBox() {
+  const have = !!token;
+  $('token-msg').textContent = have
+    ? 'Token stored in this browser. The presenter pages below will open unlocked.'
+    : 'Paste the control token to unlock the presenter pages. It is printed in the server console at startup.';
+  $('forget').style.display = have ? '' : 'none';
+  $('token').value = '';
+  $('token').placeholder = have ? 'Replace stored token' : 'Control token';
+}
+
+function chip(label, value, state = '') {
+  return `<span class="chip ${state}"><b>${value}</b> ${label}</span>`;
+}
+
+async function refresh() {
+  let s;
+  try { s = await fetch('/api/status').then((r) => r.json()); }
+  catch { $('status').innerHTML = chip('server unreachable', '!', 'bad'); return; }
+
+  $('status').innerHTML = [
+    chip('image' + (s.images.count === 1 ? '' : 's'), s.images.count,
+         s.images.count ? 'good' : 'bad'),
+    chip('model run' + (s.model_runs.count === 1 ? '' : 's'), s.model_runs.count,
+         s.model_runs.count ? 'good' : ''),
+    chip('response' + (s.responses.participants === 1 ? '' : 's'),
+         s.responses.participants),
+    chip(s.images.active ? `showing “${s.images.active.label}”` : 'no active image',
+         '', s.images.active ? 'good' : 'bad'),
+  ].join('');
+
+  $('warnings').innerHTML = s.warnings.map((w) =>
+    `<div class="warn-item ${w.level}">${w.text}</div>`).join('');
+
+  $('join').innerHTML = s.join_url_reachable
+    ? s.join_url
+    : `${s.join_url} <span style="color:var(--danger)">— reachable only on this machine</span>`;
+}
+
+$('save').addEventListener('click', () => {
+  const v = $('token').value.trim();
+  if (!v) return;
+  token = v;
+  localStorage.setItem(TOKEN_KEY, token);
+  renderTokenBox(); renderCards();
+});
+$('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
+$('forget').addEventListener('click', () => {
+  token = '';
+  localStorage.removeItem(TOKEN_KEY);
+  renderTokenBox(); renderCards();
+});
+
+if (token) localStorage.setItem(TOKEN_KEY, token);
+renderTokenBox();
+renderCards();
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
