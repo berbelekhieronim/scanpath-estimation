@@ -8,7 +8,7 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** Phases 1–5 complete. Participants join by QR and tap; the presenter
+**Status:** Phases 1–6 complete — the build order in the spec is finished. Participants join by QR and tap; the presenter
 screen shows the aggregate live, overlays the model's predicted scanpath, and
 reports agreement against baselines and a human-to-human ceiling.
 
@@ -141,3 +141,34 @@ at all, so the display can be developed without a GPU. Its output is stamped
 `source: "synthetic"`, and the display shows a full-width red warning banner
 whenever it renders one. **Never present synthetic output as a model
 prediction** — delete `data/model/*.json` and regenerate before a real session.
+
+## Live inference during a talk (Tier C)
+
+Run the model on your MacBook and have the result appear on the projector:
+
+```bash
+export SCANPATH_URL=https://YOUR-CODESPACE-8000.app.github.dev
+export SCANPATH_TOKEN=your-control-token
+
+python tools/push_result.py --repo ../DeepGaze3.5-VL \
+    --image data/images/street.jpg --mode freeview --num-fixations 5
+```
+
+It computes locally and POSTs the result; the display picks it up within about
+two seconds. Inference takes 1–3 minutes, which is a long silence in a talk —
+narrate over it, and keep the precomputed run on screen as the fallback.
+
+`--json run.json` pushes a file you already have, without recomputing.
+
+## After a session
+
+```bash
+python tools/export.py --token YOUR_CONTROL_TOKEN
+```
+
+Writes `data/exports/session-TIMESTAMP.json` plus a flat CSV of every tap.
+**Commit these.** A Codespace is eventually deleted with its database inside,
+and participant responses are the only thing here that cannot be regenerated.
+
+The export omits user-agent strings — the participant screen promises
+anonymity, and a UA string is identifying.

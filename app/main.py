@@ -387,6 +387,103 @@ def api_set_model_config(payload: dict, _: str = Depends(require_token)):
     return {"config": model_config()}
 
 
+class PushedRun(BaseModel):
+    image: str
+    mode: str
+    n_fixations: int
+    scanpath_norm: list[list[float]]
+    target: Optional[str] = None
+    seed: Optional[int] = None
+    temperature: Optional[float] = None
+    prompt_text: Optional[str] = None
+    scanpath_grid: Optional[list[list[int]]] = None
+    samples_norm: Optional[list[list[list[float]]]] = None
+    samples_grid: Optional[list[list[list[int]]]] = None
+    source: str = "pushed"
+    model: Optional[str] = None
+    device: Optional[str] = None
+    elapsed_seconds: Optional[float] = None
+    created_at: Optional[str] = None
+
+    @field_validator("scanpath_norm")
+    @classmethod
+    def in_unit_square(cls, v):
+        if not v:
+            raise ValueError("scanpath_norm is empty")
+        for x, y in v:
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError("coordinates must be normalised to 0.0-1.0")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def known_mode(cls, v):
+        if v not in ("freeview", "search"):
+            raise ValueError("mode must be freeview or search")
+        return v
+
+
+@app.post("/api/model/push")
+def api_push_model_run(run: PushedRun, _: str = Depends(require_token)):
+    """Accept a scanpath run computed elsewhere — Tier C in the spec.
+
+    This is what makes live inference from a laptop possible without the
+    Codespace ever seeing a GPU: run the model on the machine that has one,
+    POST the result here, and the display picks it up on its next poll.
+    """
+    images = {i["filename"]: i for i in db.list_images()}
+    image = images.get(run.image)
+    if not image:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No image named {run.image!r}. Known: {sorted(images)}",
+        )
+
+    payload = run.model_dump()
+    payload.setdefault("created_at", db.utcnow())
+    run_id = db.upsert_model_run(image["id"], payload)
+    return {"run_id": run_id, "image_id": image["id"],
+            "stored_as": payload["source"]}
+
+
+@app.get("/api/export")
+def api_export(_: str = Depends(require_token)):
+    """Everything needed to reconstruct a session offline.
+
+    A Codespace is deleted after a retention period, taking its SQLite file
+    with it. Participant responses are the only thing in this project that
+    cannot be regenerated, so exporting after each session is not optional.
+    """
+    import json as _json
+
+    with db.connect() as conn:
+        images = [dict(r) for r in conn.execute("SELECT * FROM images")]
+        rounds = [dict(r) for r in conn.execute("SELECT * FROM rounds ORDER BY id")]
+        participants = [dict(r) for r in conn.execute(
+            "SELECT id, uuid, first_seen FROM participants ORDER BY id")]
+        markers = [dict(r) for r in conn.execute(
+            "SELECT * FROM markers ORDER BY round_id, participant_id, seq")]
+        runs = [dict(r) for r in conn.execute("SELECT * FROM model_runs ORDER BY id")]
+
+    for r in runs:
+        try:
+            r["payload"] = _json.loads(r.pop("coords_json"))
+        except Exception:
+            r["payload"] = None
+
+    return {
+        "exported_at": db.utcnow(),
+        "schema": 1,
+        "counts": {
+            "images": len(images), "rounds": len(rounds),
+            "participants": len(participants), "markers": len(markers),
+            "model_runs": len(runs),
+        },
+        "images": images, "rounds": rounds, "participants": participants,
+        "markers": markers, "model_runs": runs,
+    }
+
+
 @app.post("/api/control/rescan-model")
 def api_rescan_model(_: str = Depends(require_token)):
     return {"result": db.sync_model_runs_from_disk(), "runs": db.list_model_runs()}
