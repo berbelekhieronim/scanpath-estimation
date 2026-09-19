@@ -76,6 +76,25 @@ def require_token(
     return supplied
 
 
+class LAYERS:
+    """Layer visibility. 'Clear' hides a layer; it never deletes data."""
+
+    KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0"}
+
+    @classmethod
+    def current(cls) -> dict:
+        return {
+            name: db.get_state(f"layer_{name}", default) == "1"
+            for name, default in cls.KEYS.items()
+        }
+
+    @classmethod
+    def set(cls, name: str, on: bool) -> None:
+        if name not in cls.KEYS:
+            raise HTTPException(status_code=400, detail=f"Unknown layer: {name}")
+        db.set_state(f"layer_{name}", "1" if on else "0")
+
+
 # --------------------------------------------------------------------------
 # Pages
 # --------------------------------------------------------------------------
@@ -153,11 +172,33 @@ def api_state():
         "image": image,
         "tap_count": int(db.get_state("tap_count", config.DEFAULT_TAP_COUNT)),
         "responses": counts,
-        "layers": {
-            "human": db.get_state("layer_human", "1") == "1",
-            "model": db.get_state("layer_model", "0") == "1",
-            "analysis": db.get_state("layer_analysis", "0") == "1",
-        },
+        "layers": LAYERS.current(),
+    }
+
+
+@app.get("/api/markers")
+def api_markers():
+    """Every response for the open round, grouped into per-participant paths.
+
+    Returned as ordered coordinate lists rather than flat rows so the display
+    can draw scanpaths without regrouping, and so the payload stays small
+    enough to poll every two seconds without thinking about it.
+    """
+    round_ = db.get_active_round()
+    if not round_:
+        return {"round_id": None, "paths": [], "points": [], "count": 0}
+
+    rows = db.get_round_markers(round_["id"])
+    paths: dict[int, list] = {}
+    for r in rows:
+        paths.setdefault(r["participant_id"], []).append([r["x"], r["y"]])
+
+    ordered = list(paths.values())
+    return {
+        "round_id": round_["id"],
+        "paths": ordered,
+        "points": [pt for path in ordered for pt in path],
+        "count": len(ordered),
     }
 
 
@@ -245,6 +286,28 @@ def api_set_active(image_id: int = Query(...), _: str = Depends(require_token)):
         raise HTTPException(status_code=404, detail="No such image")
     round_id = db.open_round(image_id)
     return {"round_id": round_id, "image": image}
+
+
+@app.post("/api/control/layers")
+def api_set_layers(payload: dict, _: str = Depends(require_token)):
+    for name, on in payload.items():
+        LAYERS.set(name, bool(on))
+    return {"layers": LAYERS.current()}
+
+
+@app.post("/api/control/reset-round")
+def api_reset_round(_: str = Depends(require_token)):
+    """Open a fresh round on the same image.
+
+    The previous round is closed, not deleted — its responses stay in the
+    database and can still be exported. This is for running the same stimulus
+    with a second group, not for discarding the first.
+    """
+    round_ = db.get_active_round()
+    if not round_:
+        raise HTTPException(status_code=409, detail="No round is open")
+    new_id = db.open_round(round_["image_id"])
+    return {"round_id": new_id, "previous_round_id": round_["id"]}
 
 
 @app.get("/api/admin/token-check")

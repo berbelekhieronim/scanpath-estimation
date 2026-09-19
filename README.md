@@ -8,8 +8,9 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** Phases 1–2 complete. Participants can join and submit taps.
-Next: Phase 3, the presenter display.
+**Status:** Phases 1–3 complete. The entire human half of the demo runs end to
+end: participants join by QR, tap, and the presenter screen shows the aggregate
+live. Next: Phase 4, the model overlay.
 
 ## Start here
 
@@ -59,8 +60,8 @@ in `/admin`.
 |---|---|---|
 | `/` | Participants | Capture view — tap in order, undo, submit |
 | `/qr` | Projector | Full-screen QR code to join |
-| `/display` | Projector | Presenter screen (Phase 3) |
-| `/control?k=TOKEN` | Presenter | Layer and model controls (Phase 3) |
+| `/display` | Projector | Heatmap, individual paths, live response count |
+| `/control?k=TOKEN` | Presenter | Layer toggles, image select, fresh round |
 | `/admin?k=TOKEN` | Presenter | Image management |
 
 `SCANPATH_CONTROL_TOKEN` pins the token; otherwise one is generated on first run
@@ -79,3 +80,14 @@ what a misconfigured port looks like before anyone tries to scan it.
 pip install -r requirements-dev.txt
 pytest
 ```
+
+## Running a session
+
+1. Open `/control?k=TOKEN` on your laptop and `/display` on the projector.
+2. Put `/qr` up while people join — the response count rises on both screens.
+3. When the room has responded, reveal the layers in order: heatmap first,
+   then individual paths.
+4. **Clear** is a layer toggle, not a delete. Responses stay in the database
+   and reappear if you switch the layer back on.
+5. To run the same image with a second group, use **Start a fresh round** —
+   the earlier responses are kept and stay exportable.

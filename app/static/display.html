@@ -3,17 +3,149 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Presenter display — scanpath-estimation</title>
+<meta name="robots" content="noindex">
+<title>Display — scanpath-estimation</title>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/display.css">
 </head>
 <body>
-<div class="wrap">
-  <div class="empty">
-    <h1>Presenter display</h1>
-    <p>Arrives in <strong>Phase 3</strong> of the build.</p>
-    <p class="sub">Aggregate human taps, model scanpath overlay, and agreement metrics.</p>
-    <p style="margin-top:28px"><a href="/admin" style="color:var(--accent)">Go to admin &rarr;</a></p>
+
+<div class="display">
+
+  <div class="topbar">
+    <div class="title" id="title">…</div>
+    <div class="tally">
+      <span class="n" id="count">0</span>
+      <span class="lbl" id="count-label">responses</span>
+    </div>
   </div>
+
+  <div class="stage" id="stage">
+    <div class="frame" id="frame" hidden>
+      <img id="photo" alt="">
+      <canvas id="heat"></canvas>
+      <svg id="paths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+  </div>
+
+  <div class="legend" id="legend"></div>
+
 </div>
+
+<script type="module">
+import { drawHeatmap } from '/static/heatmap.js';
+
+const $ = (id) => document.getElementById(id);
+let lastSignature = '';
+let currentRoundId = null;
+let imageAspect = null;
+
+function setEmpty(msg) {
+  $('frame').hidden = true;
+  $('stage').innerHTML = `<div class="empty-state"><div>
+      <h2>Nothing on display</h2><p>${msg}</p></div></div>`;
+}
+
+function renderPaths(paths, show) {
+  const svg = $('paths');
+  if (!show) { svg.innerHTML = ''; return; }
+  const V = 1000;
+  // One faint line per participant. Individually they are noise; together
+  // the shared structure is the point, so they are drawn low-contrast and
+  // let the heatmap carry the density.
+  svg.innerHTML = paths.map((pts) => {
+    const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
+    const dots = pts.map(([x, y], i) =>
+      `<circle cx="${x * V}" cy="${y * V}" r="${i === 0 ? 7 : 5}"
+        fill="${i === 0 ? '#fff' : 'rgba(255,255,255,.55)'}"
+        vector-effect="non-scaling-stroke"/>`).join('');
+    return `<polyline points="${d}" fill="none" stroke="rgba(255,255,255,.42)"
+              stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
+              vector-effect="non-scaling-stroke"/>${dots}`;
+  }).join('');
+}
+
+function renderLegend(layers, n) {
+  const keys = [];
+  if (layers.heatmap && n) keys.push(
+    `<span class="key"><span class="swatch heat"></span>where people said they'd look — fewer &rarr; more</span>`);
+  if (layers.paths && n) keys.push(
+    `<span class="key"><span class="swatch path"></span>individual orders, first look ringed brighter</span>`);
+  $('legend').innerHTML = keys.join('');
+}
+
+function sizeCanvas() {
+  const frame = $('frame');
+  const c = $('heat');
+  const r = frame.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; return true; }
+  return false;
+}
+
+async function tick() {
+  let state, data;
+  try {
+    [state, data] = await Promise.all([
+      fetch('/api/state').then((r) => r.json()),
+      fetch('/api/markers').then((r) => r.json()),
+    ]);
+  } catch { return; }
+
+  if (!state.image || !state.round_id) {
+    setEmpty('The presenter has not chosen an image yet.');
+    lastSignature = '';
+    return;
+  }
+
+  // Rebuild only when something actually changed — a projector redrawing
+  // every two seconds flickers and reads as broken.
+  const signature = JSON.stringify([
+    state.round_id, state.image.id, state.layers, data.count,
+    data.paths.length && data.paths[data.paths.length - 1],
+  ]);
+  const changed = signature !== lastSignature;
+  lastSignature = signature;
+
+  if (state.round_id !== currentRoundId) {
+    currentRoundId = state.round_id;
+    if (!$('frame')) location.reload();
+  }
+
+  const frame = $('frame');
+  if (frame.hidden) frame.hidden = false;
+  if (imageAspect !== state.image.id) {
+    imageAspect = state.image.id;
+    frame.style.aspectRatio = `${state.image.width} / ${state.image.height}`;
+    $('photo').src = '/img/' + encodeURIComponent(state.image.filename);
+  }
+
+  $('title').innerHTML = `${state.image.label}<span class="sub">${state.tap_count} taps each</span>`;
+  $('count').textContent = data.count;
+  $('count-label').textContent = data.count === 1 ? 'response' : 'responses';
+
+  const resized = sizeCanvas();
+  if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick
+  if (changed || resized) {
+    drawHeatmap($('heat'), state.layers.heatmap ? data.points : []);
+    renderPaths(data.paths, state.layers.paths);
+    renderLegend(state.layers, data.count);
+  }
+}
+
+// Redraw on resize so the projector can be reconnected mid-session.
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { lastSignature = ''; tick(); }, 150);
+});
+
+$('photo').addEventListener('load', () => { lastSignature = ''; tick(); });
+
+tick();
+setInterval(tick, 2000);
+</script>
 </body>
 </html>

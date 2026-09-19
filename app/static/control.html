@@ -3,17 +3,237 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Presenter controls — scanpath-estimation</title>
+<meta name="robots" content="noindex">
+<title>Control — scanpath-estimation</title>
 <link rel="stylesheet" href="/static/app.css">
+<style>
+  .panel { display: grid; gap: 18px; }
+  .section h2 { font-size: 0.8125rem; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--muted); margin: 0 0 10px; }
+  .toggles { display: grid; gap: 8px; }
+  .toggle {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; padding: 13px 16px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface-2);
+    cursor: pointer; user-select: none;
+  }
+  .toggle:hover { border-color: var(--accent); }
+  .toggle .name { font-weight: 600; }
+  .toggle .desc { color: var(--muted); font-size: 0.8125rem; margin-top: 2px; }
+  .toggle[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+  .toggle[aria-disabled="true"]:hover { border-color: var(--border); }
+  .sw {
+    flex: 0 0 auto; width: 46px; height: 27px; border-radius: 999px;
+    background: var(--border); position: relative; transition: background .15s;
+  }
+  .sw::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 21px; height: 21px; border-radius: 50%; background: #fff;
+    transition: transform .15s;
+  }
+  .toggle.on .sw { background: var(--accent); }
+  .toggle.on .sw::after { transform: translateX(19px); }
+  select {
+    font: inherit; padding: 10px 12px; border-radius: var(--radius);
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); width: 100%; max-width: 420px;
+  }
+  .stat { display: flex; align-items: baseline; gap: 10px; }
+  .stat .n { font-size: 2.25rem; font-weight: 700; color: var(--accent);
+    font-variant-numeric: tabular-nums; line-height: 1; }
+  .links a { color: var(--accent); text-decoration: none; margin-right: 18px; }
+  .links a:hover { text-decoration: underline; }
+  .danger-btn { border-color: var(--danger); color: var(--danger); }
+  .danger-btn:hover:not(:disabled) { background: var(--danger); color: #fff; }
+</style>
 </head>
 <body>
 <div class="wrap">
-  <div class="empty">
-    <h1>Presenter controls</h1>
-    <p>Arrives in <strong>Phase 3</strong> of the build.</p>
-    <p class="sub">Layer toggles, image selection, and model run controls.</p>
-    <p style="margin-top:28px"><a href="/admin" style="color:var(--accent)">Go to admin &rarr;</a></p>
+
+  <header class="bar">
+    <div>
+      <h1>Presenter controls</h1>
+      <div class="sub" id="subtitle">…</div>
+    </div>
+    <div class="links">
+      <a href="/display" target="_blank">Display &rarr;</a>
+      <a href="/qr" target="_blank">Join screen &rarr;</a>
+      <a href="/admin" target="_blank">Admin &rarr;</a>
+    </div>
+  </header>
+
+  <div id="notice" class="notice"></div>
+
+  <div id="auth" class="card" style="display:none; margin-bottom:20px">
+    <div style="margin-bottom:10px">Presenter token required.</div>
+    <div class="row">
+      <input type="password" id="token" placeholder="Control token" autocomplete="off">
+      <button class="primary" id="save-token">Unlock</button>
+    </div>
+    <div class="sub" style="margin-top:10px">Printed in the server console at startup.</div>
+  </div>
+
+  <div class="panel" id="panel">
+
+    <div class="card section">
+      <h2>Responses</h2>
+      <div class="stat"><span class="n" id="count">0</span>
+        <span id="count-label">responses in this round</span></div>
+    </div>
+
+    <div class="card section">
+      <h2>Layers</h2>
+      <div class="toggles" id="toggles"></div>
+      <div class="sub" style="margin-top:12px">
+        Hiding a layer never deletes anything. Responses stay in the database
+        and come back when you switch the layer on again.
+      </div>
+    </div>
+
+    <div class="card section">
+      <h2>Image</h2>
+      <select id="image-select"></select>
+      <div class="sub" style="margin-top:10px">
+        Changing the image opens a new round. Participants' phones pick it up
+        within a few seconds.
+      </div>
+    </div>
+
+    <div class="card section">
+      <h2>Round</h2>
+      <div class="row">
+        <button id="reset" class="danger-btn">Start a fresh round</button>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        Same image, empty slate — for running it with a second group. The
+        previous round's responses are kept and stay exportable.
+      </div>
+    </div>
+
   </div>
 </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const TOKEN_KEY = 'scanpath_control_token';
+let token = localStorage.getItem(TOKEN_KEY) ||
+            new URLSearchParams(location.search).get('k') || '';
+let state = null;
+
+const LAYERS = [
+  { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
+  { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
+  { key: 'model',    name: 'Model scanpath', desc: 'Arrives in Phase 4', disabled: true },
+  { key: 'analysis', name: 'Agreement metrics', desc: 'Arrives in Phase 5', disabled: true },
+];
+
+function notice(msg, kind = '') {
+  const el = $('notice');
+  el.textContent = msg || '';
+  el.className = 'notice' + (kind ? ' ' + kind : '');
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json',
+               ...(opts.headers || {}), 'X-Control-Token': token },
+  });
+  if (res.status === 403) { $('auth').style.display = ''; throw new Error('Invalid token'); }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+function renderToggles() {
+  $('toggles').innerHTML = LAYERS.map((l) => {
+    const on = state.layers[l.key];
+    return `<div class="toggle ${on ? 'on' : ''}" data-key="${l.key}"
+                 aria-disabled="${!!l.disabled}" role="switch" aria-checked="${on}">
+        <div><div class="name">${l.name}</div><div class="desc">${l.desc}</div></div>
+        <div class="sw"></div>
+      </div>`;
+  }).join('');
+
+  $('toggles').querySelectorAll('.toggle').forEach((el) => {
+    if (el.getAttribute('aria-disabled') === 'true') return;
+    el.addEventListener('click', () => setLayer(el.dataset.key, !state.layers[el.dataset.key]));
+  });
+}
+
+async function setLayer(key, on) {
+  try {
+    const out = await api('/api/control/layers', {
+      method: 'POST', body: JSON.stringify({ [key]: on }),
+    });
+    state.layers = out.layers;
+    renderToggles();
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+async function refresh() {
+  try {
+    const [s, m, imgs] = await Promise.all([
+      fetch('/api/state').then((r) => r.json()),
+      fetch('/api/markers').then((r) => r.json()),
+      fetch('/api/images').then((r) => r.json()),
+    ]);
+    const first = state === null;
+    state = s;
+    $('count').textContent = m.count;
+    $('count-label').textContent =
+      `response${m.count === 1 ? '' : 's'} in this round`;
+    $('subtitle').textContent = s.image
+      ? `${s.image.label} · ${s.tap_count} taps each`
+      : 'No image selected';
+
+    if (first || $('toggles').children.length === 0) renderToggles();
+    else LAYERS.forEach((l) => {
+      const el = $('toggles').querySelector(`[data-key="${l.key}"]`);
+      if (el) { el.classList.toggle('on', !!s.layers[l.key]);
+                el.setAttribute('aria-checked', !!s.layers[l.key]); }
+    });
+
+    const sel = $('image-select');
+    if (sel.options.length !== imgs.images.length) {
+      sel.innerHTML = imgs.images.map((im) =>
+        `<option value="${im.id}">${im.label}</option>`).join('');
+    }
+    if (s.image) sel.value = String(s.image.id);
+  } catch {}
+}
+
+$('image-select').addEventListener('change', async (e) => {
+  try {
+    const out = await api(`/api/admin/active?image_id=${e.target.value}`, { method: 'POST' });
+    notice(`Now showing "${out.image.label}". A new round is open.`, 'ok');
+    await refresh();
+  } catch (err) { notice(err.message, 'err'); }
+});
+
+$('reset').addEventListener('click', async () => {
+  if (!confirm('Start a fresh round on the same image?\n\nThe current responses are kept and stay exportable, but the display will go back to empty.')) return;
+  try {
+    await api('/api/control/reset-round', { method: 'POST' });
+    notice('Fresh round open. The display is now empty.', 'ok');
+    await refresh();
+  } catch (e) { notice(e.message, 'err'); }
+});
+
+$('save-token').addEventListener('click', async () => {
+  token = $('token').value.trim();
+  localStorage.setItem(TOKEN_KEY, token);
+  try { await api('/api/admin/token-check'); $('auth').style.display = 'none';
+        notice('Unlocked.', 'ok'); await refresh(); }
+  catch { notice('That token was not accepted.', 'err'); }
+});
+$('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save-token').click(); });
+
+(async function init() {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  try { await api('/api/admin/token-check'); } catch {}
+  await refresh();
+  setInterval(refresh, 2000);
+})();
+</script>
 </body>
 </html>

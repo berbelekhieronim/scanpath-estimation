@@ -1,0 +1,55 @@
+/* Presenter display. Projected, read from across a room, never scrolls. */
+
+html, body { height: 100%; overflow: hidden; background: #0b0c10; }
+
+.display {
+  height: 100vh; height: 100dvh;
+  display: flex; flex-direction: column;
+  padding: 18px 22px; gap: 14px;
+}
+
+.topbar {
+  flex: 0 0 auto; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 24px;
+}
+.topbar .title { font-size: 1.375rem; font-weight: 600; }
+.topbar .title .sub { color: var(--muted); font-weight: 400; font-size: 1rem; margin-left: 10px; }
+
+/* The response count is the number the presenter watches while people join,
+   so it is deliberately oversized. */
+.tally { display: flex; align-items: baseline; gap: 10px; }
+.tally .n {
+  font-size: clamp(2rem, 4.4vw, 3.5rem); font-weight: 700;
+  line-height: 1; font-variant-numeric: tabular-nums; color: var(--accent);
+}
+.tally .lbl { color: var(--muted); font-size: 1.0625rem; }
+
+.stage { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; }
+
+.frame {
+  position: relative; max-width: 100%; max-height: 100%;
+  border-radius: 10px; overflow: hidden; background: #000;
+  box-shadow: 0 6px 40px rgba(0, 0, 0, .6);
+}
+.frame > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.frame img { position: relative; display: block; object-fit: fill; }
+#heat { pointer-events: none; }
+#paths { pointer-events: none; }
+
+.legend {
+  flex: 0 0 auto; display: flex; gap: 20px; align-items: center;
+  justify-content: center; color: var(--muted); font-size: 0.9375rem;
+  min-height: 22px;
+}
+.legend .key { display: inline-flex; align-items: center; gap: 7px; }
+.legend .swatch { width: 26px; height: 9px; border-radius: 3px; }
+.legend .swatch.heat {
+  background: linear-gradient(90deg, #2b3aa0, #1e9e8a, #d8d13c, #e8452e);
+}
+.legend .swatch.path { background: rgba(255, 255, 255, .72); }
+
+.empty-state {
+  text-align: center; color: var(--muted);
+  display: grid; place-items: center; height: 100%;
+}
+.empty-state h2 { color: var(--text); margin: 0 0 8px; font-size: 1.5rem; }
