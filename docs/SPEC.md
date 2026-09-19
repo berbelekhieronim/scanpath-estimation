@@ -113,25 +113,26 @@ standard GitHub Codespace.**
 
 This is not a detail to engineer around — it is the fork in the road:
 
-- FTP shared hosting: PHP, no GPU, no long-running process. Cannot run the model. Ever.
 - GitHub Codespaces: CPU-only on all standard machine types. Cannot run an 8B VLM at usable speed. GPU Codespaces exist but are not in the default offering.
-- Your M4 MacBook has the memory but not CUDA, so the repo's own instructions do not run on it either (§4.2).
+- Shared web hosting of any kind: no GPU, no long-running process. Cannot run the model. Ever.
+- Your M4 MacBook has the memory but not CUDA, so the repo's own instructions do not run there unmodified either (§4.2).
 - vLLM engine startup is minutes, not milliseconds. Even *with* a GPU, this can never be a cold-start-per-request web endpoint. It needs a warm, persistent process.
 
 Therefore the system **must** split into two independently deployable pieces:
 
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
-│  WEB APP  (no GPU)          │        │  MODEL RUNNER  (GPU)         │
-│  ─────────────────          │        │  ──────────────              │
-│  • participant capture      │◄──────►│  • vLLM + InternVL3.5-8B     │
-│  • presenter display        │  JSON  │  • LoRA adapters             │
-│  • storage + analysis       │        │  • emits scanpath JSON       │
-│  Runs anywhere. Tiny.       │        │  Runs where a GPU is.        │
+│  WEB APP  — GitHub Codespace│        │  MODEL RUNNER — MacBook M4   │
+│  ───────────────────────────│        │  ──────────────────────────  │
+│  • participant capture      │◄──────►│  • transformers + MPS        │
+│  • presenter display        │  JSON  │  • InternVL3.5-8B + LoRA     │
+│  • storage + analysis       │  over  │  • emits scanpath JSON       │
+│  FastAPI + SQLite. No GPU.  │ HTTPS  │  Slow but sufficient.        │
 └─────────────────────────────┘        └──────────────────────────────┘
 ```
 
-The web app never imports torch. The model runner never serves participants.
+The web app never imports torch — it is not even in its requirements file. The
+model runner never serves participants.
 They meet at a JSON contract (§6.3). This keeps the participant-facing path —
 the non-negotiable part — completely immune to GPU availability, driver
 problems, CUDA OOM, and HuggingFace being slow.
@@ -140,40 +141,36 @@ problems, CUDA OOM, and HuggingFace being slow.
 
 ## 4. Recommended build
 
-### 4.1 Web app: PHP, with a storage layer that works either way
+### 4.1 Web app: Python + FastAPI + SQLite, hosted in a Codespace
 
-**Recommendation.** Zenbox runs PHP, which is the only thing that must be true.
-Frontend is a single static HTML page per view with vanilla JS and inline SVG
-overlays — no framework, no bundler, no npm, no Node process to keep alive.
-Deployment is a drag-and-drop over the FTP client you already use. Total payload
-under 50 KB excluding images. For a room of 30 people tapping an image this is
-comfortably sufficient and has the fewest moving parts of any option.
+**Stack.** FastAPI serving a JSON API plus four static pages. Storage is SQLite
+through Python's stdlib `sqlite3` — no driver question, no MySQL fallback, no
+`Storage` abstraction. The whole hosting-capability problem that Zenbox posed
+simply does not exist here.
 
-**The SQLite question is unblocked, not answered.** Zenbox's PHP module list
-isn't publicly documented, so rather than block Phase 1 on finding out, storage
-goes behind a thin `Storage` interface with two implementations:
+Frontend stays as originally specified: one static HTML page per view, vanilla
+JS, inline SVG overlays. No framework, no bundler, no npm. Under 50 KB excluding
+images. This was the right call for an unpredictable mix of phones and nothing
+about the pivot changes it.
 
-- `SqliteStorage` — zero setup, a single file, preferred if `pdo_sqlite` is present.
-- `MysqlStorage` — same schema, used if only `pdo_mysql` is available. Every
-  shared host that offers PHP offers MySQL/MariaDB, so this is the guaranteed
-  fallback.
+**Why Python rather than PHP.** You need Python regardless — `predict_mps.py`,
+`precompute.py` and `analysis.py` all live there. The deciding factor is §7: the
+analysis needs mean-shift clustering, Spearman correlation and NSS, which means
+scipy and scikit-learn. In PHP that is either a reimplementation or a subprocess
+call per request. In Python it is an import. Running one language across the web
+app, the model tooling and the statistics removes a whole category of seam.
 
-Both speak the same ~8 queries. The choice is one config line, decided once when
-you know which extension exists. This costs maybe an extra hour of work and
-removes an unknown from the critical path entirely.
+**What this costs.** The app no longer deploys to Zenbox shared hosting, which
+does not run Python. If it ever needs a permanent home, that is a Fly.io or
+Render free tier and about an hour's work — the app is a single process with a
+SQLite file, which is close to the easiest thing there is to deploy.
 
-**To find out which:** upload `tools/check_host.php` to your Zenbox web root,
-open it in a browser, and it reports PHP version, which PDO drivers are
-available, whether the data directory is writable, and the upload limits. Delete
-it afterwards — it reveals server configuration.
-
-**Option B — Node/Express on a small always-on host** (Fly.io, Render, Railway)
-remains the alternative if you would rather work in JS, but with the storage
-layer abstracted there is no longer a reason to reach for it.
-
-**On Codespaces:** excellent for *developing* this, poor for *hosting* the live
-session — a forwarded port gives a long URL, must be set public, and sleeps after
-idle timeout. Develop there, deploy to Zenbox.
+**Dependencies** are deliberately few: `fastapi`, `uvicorn`, `numpy`, `scipy`,
+`scikit-learn`, `Pillow`, `qrcode`. The model tooling's heavier requirements
+(`torch`, `transformers`, `peft`) are in a separate `requirements-model.txt` and
+are **never installed in the Codespace** — they belong on the MacBook. Keeping
+these apart is what stops the web container from trying to pull 2 GB of PyTorch
+it will never use.
 
 ### 4.2 Model runner on an M4 MacBook: bypass vLLM
 
@@ -254,6 +251,50 @@ precompute makes runtime invisible at demo time anyway.
 machine, because this is the one part of the plan that cannot be verified from
 here. Everything upstream of it is independent of the outcome.
 
+### 4.3 Running the live session from a Codespace
+
+The Codespace hosts the participant-facing app on the day. Four things need
+handling, and none is difficult if set up in advance.
+
+**1. The port must be public.** A forwarded port defaults to private, which
+would demand a GitHub login from every participant. `.devcontainer/devcontainer.json`
+declares it:
+
+```jsonc
+"forwardPorts": [8000],
+"portsAttributes": { "8000": { "label": "app", "visibility": "public" } }
+```
+
+**Verify this manually in the Ports panel before every session.** There is a
+known Codespaces issue where visibility does not apply on first boot until it is
+toggled by hand, and it can revert across a stop/start. This is a thirty-second
+check that prevents the single most likely way for the demo to fail.
+
+**2. The URL is unusable by hand.** It looks like
+`https://fuzzy-space-guide-xyz123-8000.app.github.dev`. Nobody is typing that on
+a phone. The app serves `/qr` — a full-screen QR code of the participant URL,
+which you project while people join. The URL is stable for the life of the
+Codespace, so the QR code can go on a slide in advance.
+
+**3. The idle timeout.** Default is 30 minutes and it keys off *interaction*;
+GitHub's documentation does not confirm whether HTTP traffic to a forwarded port
+resets it. Treat it as though it does not. Mitigations, all three:
+
+- Raise the timeout to its maximum (240 minutes) in your personal Codespaces settings, well before the session.
+- Keep the Codespace browser tab open and connected throughout.
+- Know the recovery: a stopped Codespace keeps its filesystem and its URL. Restarting takes about 30 seconds and **no data is lost** — then re-check the port is still public (point 1).
+
+**4. Data must outlive the container.** A Codespace is deleted after a retention
+period, taking the SQLite file with it. `/api/export` returns every response as
+JSON, and `tools/export.py` writes it to `data/exports/`. **Export immediately
+after each session and commit it.** Participant responses are the one thing here
+that cannot be regenerated.
+
+**The model does not run in the Codespace.** Inference happens on your MacBook
+(§4.2) and reaches the app over the public URL via `tools/push_result.py`,
+authenticated with a shared secret from an environment variable. The Codespace
+never needs a GPU, and never installs torch.
+
 ---
 
 ## 5. Views and user flows
@@ -300,7 +341,12 @@ a participant who guesses the URL cannot wipe your data mid-session.
 - **Model config** — mode (free-viewing / search), target dropdown, fixation count, number of virtual observers.
 - **Reset round** — archives current responses and opens a fresh round for the same image, so you can run the same stimulus with a second group.
 
-### 5.4 `/admin` — Image management
+### 5.4 `/qr` — Join screen
+
+Full-screen QR code of the participant URL plus the URL in large text, for
+projecting while people join. Nothing else on the page.
+
+### 5.5 `/admin` — Image management
 
 Upload or rescan the assets folder, view thumbnails, set display order, see
 which images have precomputed model runs and which don't.
@@ -313,42 +359,42 @@ which images have precomputed model runs and which don't.
 
 ```
 scanpath-estimation/
+├── .devcontainer/
+│   └── devcontainer.json        # Python image, port 8000 forwarded public
 ├── docs/
 │   └── SPEC.md                  # this file
-├── public/                      # web root — this is what goes on FTP
-│   ├── index.php                # participant capture
-│   ├── display.php              # presenter screen
-│   ├── control.php              # presenter controls (token-gated)
-│   ├── admin.php                # image management
-│   ├── lib/
-│   │   ├── storage.php          # Storage interface
-│   │   ├── storage_sqlite.php   # pdo_sqlite implementation
-│   │   └── storage_mysql.php    # pdo_mysql fallback
-│   ├── api/
-│   │   ├── markers.php          # POST tap data, GET aggregate
-│   │   ├── state.php            # GET/POST active image + layer state
-│   │   ├── model.php            # GET precomputed run, POST pushed result
-│   │   └── analysis.php         # GET agreement metrics
-│   ├── assets/
-│   │   ├── app.css
-│   │   ├── capture.js
-│   │   └── display.js
-│   └── images/                  # stimulus images (your assets folder)
-├── data/                        # NOT web-accessible
+├── app/
+│   ├── main.py                  # FastAPI application and routes
+│   ├── db.py                    # SQLite schema, connection, queries
+│   ├── analysis.py              # AOI derivation and metrics (§7)
+│   └── static/
+│       ├── index.html           # participant capture
+│       ├── display.html         # presenter screen
+│       ├── control.html         # presenter controls (token-gated)
+│       ├── admin.html           # image management
+│       ├── qr.html              # full-screen participant QR code
+│       ├── app.css
+│       ├── capture.js
+│       └── display.js
+├── data/                        # gitignored except exports
 │   ├── app.sqlite
-│   └── model/                   # precomputed scanpaths, one JSON per run
+│   ├── images/                  # stimulus images
+│   ├── model/                   # precomputed scanpaths, one JSON per run
+│   └── exports/                 # session data, committed after each session
 ├── tools/
-│   ├── check_host.php           # one-off Zenbox capability probe (delete after use)
 │   ├── predict_mps.py           # single-image inference on Apple Silicon (§4.2)
 │   ├── precompute.py            # batch-run the model over all images
-│   ├── push_result.py           # Tier C: POST a local run to the web app
-│   └── analysis.py              # reference implementation of §7 metrics
-├── .gitignore
+│   ├── push_result.py           # Tier C: POST a local run to the Codespace
+│   └── export.py                # dump session data to data/exports/
+├── requirements.txt             # web app — light, installed in the Codespace
+├── requirements-model.txt       # torch/transformers/peft — MacBook only
 └── README.md
 ```
 
-`data/` must sit outside the web root, or be protected by `.htaccess` — the
-SQLite file must never be downloadable.
+FastAPI serves only `app/static/` and `data/images/`. Nothing else is
+reachable over HTTP, so the SQLite file cannot be downloaded — no `.htaccess`
+equivalent is needed. `data/exports/` is the one part of `data/` that is
+committed; everything else there is gitignored.
 
 ### 6.2 Data model
 
@@ -474,12 +520,12 @@ Each phase ends somewhere demonstrable.
 
 | Phase | Deliverable | Gate |
 |---|---|---|
-| **1** | Repo scaffold, SQLite schema, image asset loader, `/admin` | Images visible in a list |
-| **2** | `/` capture view — tap, order, undo, submit. Phone + desktop | **A phone can post markers.** The non-negotiable path works |
+| **1** | Devcontainer, FastAPI skeleton, SQLite schema, image loader, `/admin` | Codespace boots, app runs, images visible |
+| **2** | `/` capture view — tap, order, undo, submit. Plus `/qr` and public port setup | **A phone on mobile data can scan the QR and post markers.** The non-negotiable path works |
 | **3** | `/display` + `/control` — heatmap, ordered paths, layer toggles, image switch, live poll | Full human half of the demo runs end to end |
 | **4** | `tools/predict_mps.py` validated on the MacBook, then `precompute.py` + model layer rendering | Model scanpaths overlay on the image |
 | **5** | `tools/analysis.py` — AOI derivation + metrics + baselines, Layer 3 panel | Numbers on screen, including the human-to-human ceiling |
-| **6** | `tools/push_result.py` (Tier C live path) | Laptop inference appears on the projector |
+| **6** | `tools/push_result.py` (Tier C live path) + `tools/export.py` | Laptop inference appears on the projector; session data exports cleanly |
 | **7** | Optional: Tier B live service; free-text prompt panel | — |
 
 Phases 1–3 need no GPU at all and deliver a working participant experience.
@@ -491,15 +537,23 @@ built first.
 ## 9. Operational notes
 
 **Before a session**
+- Start the Codespace early and leave its browser tab open and connected.
+- **Check the Ports panel shows port 8000 as Public.** Re-check after any restart — this is the most likely single point of failure (§4.3).
+- Raise the Codespaces idle timeout to 240 minutes in your personal settings.
 - Precompute every image × config you might show. Verify each JSON renders.
-- Confirm the participant URL works on the venue's guest wifi, from a phone, not just your laptop.
-- Have a QR code to the participant URL on a slide.
-- Short URL if possible; people mistype.
+- Open `/qr` and confirm the QR scans from a phone **on mobile data**, not the same wifi.
+- Have the QR on a slide as a backup.
+
+**After a session**
+- Run `tools/export.py` and commit `data/exports/`. Participant responses are the only thing here that cannot be regenerated.
 
 **Risks**
 | Risk | Mitigation |
 |---|---|
-| Venue wifi blocks or throttles | Precomputed data is local to the server; capture degrades but display still works. Have screenshots as a final fallback |
+| Codespace idles out mid-session | Timeout raised to max, tab kept open. Recovery: restart (~30 s), data and URL both survive, re-check port visibility |
+| Port reverts to private after a restart | Explicit pre-flight check in the run sheet above; participants would otherwise hit a GitHub login |
+| Venue wifi blocks `*.app.github.dev` | Test from mobile data beforehand. Fallback: phone hotspot for the Codespace, or screenshots |
+| Codespace deleted, data lost | Export and commit after every session |
 | Live Tier C run is slow or stalls mid-talk | Tier A result is already loaded; switch layers and carry on. Never make the live run the only path to a visible result |
 | MPS inference path fails on the Mac | Fallback ladder in §4.2 — allocator cap, then CPU, then a rented GPU. Slow is acceptable, so this cannot become a blocker |
 | GPU unavailable on the day | Tier A means the GPU is never needed on the day |
@@ -526,12 +580,13 @@ All resolved. Nothing blocks Phase 1.
 
 | # | Decision | Resolution |
 |---|---|---|
-| 1 | **Hosting** | Zenbox, PHP. PDO driver unknown, so storage is abstracted over SQLite and MySQL (§4.1). `tools/check_host.php` decides which — run it whenever, it is not on the critical path |
+| 1 | **Hosting & stack** | **Revised 2026-09-19.** Zenbox/PHP dropped in favour of Python + FastAPI + SQLite hosted in a GitHub Codespace (§4.1, §4.3). Removes the PHP module unknown entirely and unifies the web app, model tooling and analysis in one language. Cost: no longer deployable to Zenbox; a permanent home would be Fly.io or Render |
 | 2 | **Model runtime** | M4 MacBook, 32 GB. transformers + MPS, reusing the repo's prompt builder (§4.2). **Slow is acceptable**, so the fallback ladder ends in plain CPU and the model can always be run |
 | 3 | **Taps per participant** | 5. Comparison is AOI-based, so counts need not match. Model at 5 fixations for metrics, 8 for the display overlay |
 | 4 | **AOI definition** | Derived, not gridded (§7). Semantic AOIs for the narrative, split-half derivation for the statistics, avoiding the circularity trap in §7.1 |
 | 5 | **Stimulus images** | 4 to start: the capybara street scene, one control (§7 / below), two spares. Precompute cost is ~2 min per image per config, so this is cheap to expand |
 | 6 | **Participant sees results?** | Projector-only. During a talk, a result on their own phone competes with the screen you want them watching. A "view results" state is a small later addition if wanted |
+| 8 | **Live session host** | The Codespace itself, with the hardening in §4.3: public port, QR join screen, raised idle timeout, post-session export |
 | 7 | **Control image** | Yes. A comparable street scene with no semantic violation, so the capybara-sign effect is *visible by contrast* rather than asserted. This is the difference between a claim and a demonstration |
 
 ### 10.1 What to do first
@@ -547,9 +602,12 @@ Items 2 and 3 are the ones with a lead time. Item 1 takes two minutes.
 ## 11. Approval
 
 Spec approved by the owner on 2026-09-19 covering: the two-part architecture
-(§3), PHP + abstracted storage (§4.1), transformers + MPS with slow runtime
-accepted (§4.2), the four views (§5), derived AOIs with split-half scoring
-(§7), and the seven-phase build order (§8).
+(§3), transformers + MPS with slow runtime accepted (§4.2), the views (§5),
+derived AOIs with split-half scoring (§7), and the seven-phase build order (§8).
+
+**Revised the same day**, also approved: the web app moves from PHP on Zenbox
+shared hosting to Python + FastAPI + SQLite hosted in a GitHub Codespace
+(§4.1), which also hosts the live participant session (§4.3).
 
 Build proceeds from Phase 1. Phases 1–3 deliver the complete participant and
 presenter experience with no GPU involved; Phase 4 is the first point at which
