@@ -3,9 +3,6 @@ data/app.sqlite
 data/app.sqlite-*
 data/*.db
 
-# Stimulus images are added per-deployment; keep the folder, not the contents
-data/images/*
-!data/images/.gitkeep
 
 # Precomputed model runs are regenerable; exports are NOT and are committed
 data/model/*
