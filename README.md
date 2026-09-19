@@ -8,8 +8,9 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** Phases 1–4 complete. Participants join by QR and tap; the presenter
-screen shows the aggregate live and can overlay the model's predicted scanpath.
+**Status:** Phases 1–5 complete. Participants join by QR and tap; the presenter
+screen shows the aggregate live, overlays the model's predicted scanpath, and
+reports agreement against baselines and a human-to-human ceiling.
 
 **The inference path has not been run against the real model** — there is no GPU
 in the environment it was written in. See *Running the model* below.

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from . import config, db, urls
+from . import analysis, config, db, urls
 
 
 @asynccontextmanager
@@ -223,6 +223,36 @@ def api_model():
 @app.get("/api/model/runs")
 def api_model_runs():
     return {"runs": db.list_model_runs()}
+
+
+@app.get("/api/analysis")
+def api_analysis():
+    """Agreement between the room's taps and the model's prediction.
+
+    Computed on demand rather than cached: it takes milliseconds at this
+    scale, and a stale panel during a live reveal would be worse than a
+    recomputation.
+    """
+    round_ = db.get_active_round()
+    if not round_:
+        return {"ok": False, "reason": "no round open"}
+
+    rows = db.get_round_markers(round_["id"])
+    by_participant: dict[int, list] = {}
+    for r in rows:
+        by_participant.setdefault(r["participant_id"], []).append([r["x"], r["y"]])
+
+    cfg = model_config()
+    run = (db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"],
+                            cfg["n_fixations"])
+           or db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"]))
+    model_paths = (run.get("samples_norm") or [run.get("scanpath_norm")]) if run else []
+
+    result = analysis.analyse(list(by_participant.values()),
+                              [p for p in model_paths if p])
+    if run:
+        result["model_source"] = run.get("source")
+    return result
 
 
 @app.get("/api/markers")
