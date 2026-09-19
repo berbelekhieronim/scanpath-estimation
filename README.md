@@ -8,8 +8,8 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** specification approved (2026-09-19), implementation not started.
-Build proceeds from Phase 1 of the spec's build order.
+**Status:** Phases 1–2 complete. Participants can join and submit taps.
+Next: Phase 3, the presenter display.
 
 ## Start here
 
@@ -57,7 +57,8 @@ in `/admin`.
 
 | Route | Who | Notes |
 |---|---|---|
-| `/` | Participants | Capture view (Phase 2) |
+| `/` | Participants | Capture view — tap in order, undo, submit |
+| `/qr` | Projector | Full-screen QR code to join |
 | `/display` | Projector | Presenter screen (Phase 3) |
 | `/control?k=TOKEN` | Presenter | Layer and model controls (Phase 3) |
 | `/admin?k=TOKEN` | Presenter | Image management |
@@ -67,6 +68,10 @@ and persisted, so it stays stable across restarts.
 
 **In a Codespace, port 8000 must be set to Public** or participants hit a GitHub
 login. Verify it in the Ports panel before every session — see §4.3 of the spec.
+
+Open `/qr` on the projector for people to join. It shows the join URL as text
+too, and warns in red if that URL is one only this machine can reach — which is
+what a misconfigured port looks like before anyone tries to scan it.
 
 ### Tests
 

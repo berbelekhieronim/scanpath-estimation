@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join — scanpath-estimation</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  .join {
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 28px; padding: 32px 24px; text-align: center;
+  }
+  .join h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.5rem); font-weight: 600; }
+  /* The QR sits on its own white card regardless of page theme — a dark
+     QR on a dark background is unscannable. */
+  .qr-card {
+    background: #fff; border-radius: 16px; padding: 18px;
+    box-shadow: 0 6px 32px rgba(0, 0, 0, .3); line-height: 0;
+  }
+  .qr-card img {
+    width: min(46vh, 76vw); height: auto; display: block;
+  }
+  .url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: clamp(0.8125rem, 1.9vw, 1.25rem);
+    word-break: break-all; max-width: 92vw; color: var(--muted);
+  }
+  .warn {
+    background: var(--danger); color: #fff; padding: 14px 20px;
+    border-radius: 10px; max-width: 700px; font-size: 0.9375rem;
+  }
+  .warn code { background: rgba(0,0,0,.25); padding: 2px 6px; border-radius: 4px; }
+  .count { color: var(--muted); font-size: 1rem; }
+</style>
+</head>
+<body>
+<div class="join">
+  <h1>Scan to join</h1>
+  <div class="qr-card" id="qr-card"><img id="qr" src="/api/qr.svg" alt="QR code to join"></div>
+  <div class="url" id="url">…</div>
+  <div id="warn"></div>
+  <div class="count" id="count"></div>
+</div>
+
+<script>
+async function loadUrl() {
+  try {
+    const d = await fetch('/api/join-url').then((r) => r.json());
+    document.getElementById('url').textContent = d.url;
+    if (!d.reachable) {
+      document.getElementById('warn').innerHTML =
+        `<div class="warn"><strong>Participants cannot reach this address.</strong><br>
+         It resolves to this machine only. In a Codespace, set port 8000 to
+         <strong>Public</strong> in the Ports panel, or set
+         <code>SCANPATH_PUBLIC_URL</code> and restart.</div>`;
+    } else {
+      document.getElementById('warn').innerHTML = '';
+    }
+  } catch {}
+}
+
+async function loadCount() {
+  try {
+    const s = await fetch('/api/state').then((r) => r.json());
+    const n = s.responses.participants;
+    document.getElementById('count').textContent =
+      n === 0 ? 'Waiting for the first response…'
+              : `${n} response${n === 1 ? '' : 's'} so far`;
+  } catch {}
+}
+
+loadUrl();
+loadCount();
+setInterval(loadCount, 2000);
+</script>
+</body>
+</html>

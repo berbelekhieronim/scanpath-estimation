@@ -5,14 +5,17 @@ the presenter display arrive in Phases 2 and 3 — their routes exist here as
 placeholders so the URL structure is settled from the start.
 """
 
+import io
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
 
-from . import config, db
+from . import config, db, urls
 
 
 @asynccontextmanager
@@ -105,6 +108,11 @@ def page_admin():
     return _page("admin.html")
 
 
+@app.get("/qr", include_in_schema=False)
+def page_qr():
+    return _page("qr.html")
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
@@ -151,6 +159,73 @@ def api_state():
             "analysis": db.get_state("layer_analysis", "0") == "1",
         },
     }
+
+
+class Submission(BaseModel):
+    round_id: int
+    participant_uuid: str = Field(min_length=8, max_length=64)
+    points: list[tuple[float, float]] = Field(min_length=1, max_length=50)
+
+    @field_validator("points")
+    @classmethod
+    def in_unit_square(cls, v):
+        for x, y in v:
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError("coordinates must be normalised to 0.0-1.0")
+        return v
+
+
+@app.post("/api/markers")
+def api_submit_markers(sub: Submission, request: Request):
+    """Accept one participant's taps for the round they were shown.
+
+    The round_id check matters: if the presenter moved to the next image while
+    someone was mid-tap, their taps belong to the image they actually saw, not
+    the one now on screen. Rejecting with 409 lets the client reload cleanly
+    rather than silently filing data against the wrong stimulus.
+    """
+    active = db.get_active_round()
+    if not active:
+        raise HTTPException(status_code=409, detail="No round is open")
+    if sub.round_id != active["id"]:
+        raise HTTPException(
+            status_code=409,
+            detail="The image changed while you were tapping. Reloading.",
+        )
+
+    participant_id = db.upsert_participant(
+        sub.participant_uuid, request.headers.get("user-agent")
+    )
+    n = db.save_markers(active["id"], participant_id, sub.points)
+    return {"saved": n, "round_id": active["id"], "responses": db.count_responses(active["id"])}
+
+
+@app.get("/api/join-url")
+def api_join_url(request: Request):
+    info = urls.public_base_url(request.base_url)
+    return {**info, "reachable": urls.is_reachable_by_others(info["url"])}
+
+
+@app.get("/api/qr.svg", include_in_schema=False)
+def api_qr(request: Request):
+    import qrcode
+    import qrcode.image.svg
+
+    url = urls.public_base_url(request.base_url)["url"]
+    img = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2)
+    buf = io.BytesIO()
+    img.save(buf)
+    svg = buf.getvalue().decode()
+
+    # The library hard-codes a millimetre width/height. Strip them so the
+    # viewBox alone governs and CSS can scale it to fill a projector.
+    svg = re.sub(r'\s(width|height)="[^"]*"', "", svg, count=2)
+
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # --------------------------------------------------------------------------

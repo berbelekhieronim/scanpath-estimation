@@ -1,0 +1,105 @@
+/* Capture view. Full-viewport, no page scroll, touch-first. */
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.capture {
+  display: flex;
+  flex-direction: column;
+  /* dvh tracks mobile browser chrome appearing and disappearing; the vh
+     fallback matters for older iOS where dvh is unsupported. */
+  height: 100vh;
+  height: 100dvh;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  gap: 10px;
+}
+
+.prompt { text-align: center; flex: 0 0 auto; }
+.prompt h1 { font-size: 1.0625rem; margin: 0 0 3px; font-weight: 600; }
+.prompt .hint { color: var(--muted); font-size: 0.8125rem; margin: 0; }
+
+.counter {
+  display: inline-flex; gap: 5px; margin-top: 7px;
+  justify-content: center; align-items: center;
+}
+.pip {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--border); transition: background .15s, transform .15s;
+}
+.pip.filled { background: var(--accent); transform: scale(1.22); }
+
+/* The stage centres the frame; the frame is exactly the image box, so
+   percentage marker positions map to the picture with no letterbox maths. */
+.stage { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; }
+
+.frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  /* manipulation kills the 300ms double-tap-to-zoom without disabling pinch */
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: crosshair;
+  background: var(--surface-2);
+}
+.frame img { display: block; width: 100%; height: 100%; object-fit: fill; }
+.frame.done { cursor: default; }
+
+.overlay { position: absolute; inset: 0; pointer-events: none; }
+
+.marker {
+  position: absolute;
+  width: 30px; height: 30px; margin: -15px 0 0 -15px;
+  border-radius: 50%;
+  border: 2.5px solid #fff;
+  background: rgba(91, 140, 255, .82);
+  color: #fff; font-size: 0.8125rem; font-weight: 700;
+  display: grid; place-items: center;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, .55);
+  pointer-events: none;
+  animation: pop .16s ease-out;
+}
+@keyframes pop { from { transform: scale(.4); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .marker { animation: none } }
+
+.actions { flex: 0 0 auto; display: flex; gap: 10px; }
+.actions button { flex: 1; padding: 13px 16px; font-size: 1rem; }
+
+.state {
+  flex: 1 1 auto; display: grid; place-items: center; text-align: center;
+  padding: 24px;
+}
+.state h2 { margin: 0 0 8px; font-size: 1.375rem; }
+.state p { margin: 0; color: var(--muted); }
+.state .big { font-size: 3rem; line-height: 1; margin-bottom: 16px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%);
+  background: var(--danger); color: #fff;
+  padding: 10px 18px; border-radius: 999px;
+  font-size: 0.875rem; font-weight: 500;
+  box-shadow: 0 3px 14px rgba(0, 0, 0, .4);
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+  max-width: 88vw; text-align: center;
+}
+.toast.show { opacity: 1; }
+
+/* Short viewports — a phone held sideways. Without this the header and
+   buttons eat most of the height and the picture shrinks to a stamp, which
+   makes accurate tapping impossible. Compact the furniture, keep the image. */
+@media (max-height: 560px) {
+  .capture { padding: 6px 10px calc(6px + env(safe-area-inset-bottom)); gap: 6px; }
+  .prompt h1 { font-size: 0.9375rem; margin-bottom: 1px; }
+  .prompt .hint { font-size: 0.75rem; }
+  .counter { margin-top: 4px; gap: 4px; }
+  .pip { width: 7px; height: 7px; }
+  .actions button { padding: 9px 14px; font-size: 0.9375rem; }
+  .marker { width: 26px; height: 26px; margin: -13px 0 0 -13px; font-size: 0.75rem; }
+}

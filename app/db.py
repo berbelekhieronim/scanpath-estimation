@@ -240,3 +240,50 @@ def get_or_create_control_token() -> str:
         token = config.generate_token()
         set_state("control_token", token)
     return token
+
+
+# --------------------------------------------------------------------------
+# participants and markers
+# --------------------------------------------------------------------------
+
+def upsert_participant(uuid: str, user_agent: Optional[str] = None) -> int:
+    with connect() as conn:
+        row = conn.execute("SELECT id FROM participants WHERE uuid = ?", (uuid,)).fetchone()
+        if row:
+            return row["id"]
+        cur = conn.execute(
+            "INSERT INTO participants (uuid, first_seen, user_agent) VALUES (?, ?, ?)",
+            (uuid, utcnow(), (user_agent or "")[:300]),
+        )
+        return cur.lastrowid
+
+
+def save_markers(round_id: int, participant_id: int, points: list[tuple[float, float]]) -> int:
+    """Replace this participant's markers for this round.
+
+    Replacing rather than rejecting means a resubmission is idempotent and a
+    participant who taps 'back' and submits again gets a sensible result,
+    instead of a 409 they cannot act on.
+    """
+    now = utcnow()
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM markers WHERE round_id = ? AND participant_id = ?",
+            (round_id, participant_id),
+        )
+        conn.executemany(
+            "INSERT INTO markers (round_id, participant_id, seq, x, y, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            [(round_id, participant_id, i, x, y, now) for i, (x, y) in enumerate(points)],
+        )
+    return len(points)
+
+
+def get_round_markers(round_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT participant_id, seq, x, y FROM markers "
+            "WHERE round_id = ? ORDER BY participant_id, seq",
+            (round_id,),
+        )
+        return [dict(r) for r in rows]
