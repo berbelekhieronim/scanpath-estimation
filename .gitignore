@@ -1,11 +1,15 @@
-# Runtime data — never commit participant responses or the database
+# Runtime data — never commit the database or participant responses in raw form
 data/app.sqlite
 data/app.sqlite-*
 data/*.db
 
 # Stimulus images are added per-deployment; keep the folder, not the contents
-public/images/*
-!public/images/.gitkeep
+data/images/*
+!data/images/.gitkeep
+
+# Precomputed model runs are regenerable; exports are NOT and are committed
+data/model/*
+!data/model/.gitkeep
 
 # Model artifacts
 *_merged/
@@ -16,10 +20,8 @@ eval_output/
 __pycache__/
 *.pyc
 .venv/
+.venv-model/
 venv/
-
-# Node
-node_modules/
 
 # OS
 .DS_Store

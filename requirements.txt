@@ -1,0 +1,10 @@
+# Web app dependencies — this is what the Codespace installs.
+# Model dependencies (torch/transformers/peft) live in requirements-model.txt
+# and are installed ONLY on the MacBook. Never install them here.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+Pillow==11.1.0
+qrcode==8.0
+numpy==2.2.1
+scipy==1.15.1
+scikit-learn==1.6.1

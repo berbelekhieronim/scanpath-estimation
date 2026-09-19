@@ -1,0 +1,242 @@
+"""SQLite schema and data access.
+
+A connection per operation, which SQLite handles well at this scale and which
+sidesteps the thread-affinity problem entirely. WAL mode so the presenter
+display polling never blocks a participant submitting.
+"""
+
+import sqlite3
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterator, Optional
+
+from . import config
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS images (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename    TEXT    NOT NULL UNIQUE,
+    label       TEXT    NOT NULL,
+    width       INTEGER NOT NULL,
+    height      INTEGER NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    present     INTEGER NOT NULL DEFAULT 1,  -- 0 if the file has gone missing
+    created_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rounds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_id   INTEGER NOT NULL REFERENCES images(id),
+    label      TEXT,
+    opened_at  TEXT    NOT NULL,
+    closed_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rounds_image ON rounds(image_id);
+
+CREATE TABLE IF NOT EXISTS participants (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid       TEXT    NOT NULL UNIQUE,
+    first_seen TEXT    NOT NULL,
+    user_agent TEXT
+);
+
+-- x and y are normalised to 0.0-1.0 against the image box, so a phone at
+-- 390px and a projector at 1920px produce comparable data. seq is the tap
+-- order, which is the part that makes this a scanpath rather than a heatmap.
+CREATE TABLE IF NOT EXISTS markers (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id       INTEGER NOT NULL REFERENCES rounds(id),
+    participant_id INTEGER NOT NULL REFERENCES participants(id),
+    seq            INTEGER NOT NULL,
+    x              REAL    NOT NULL,
+    y              REAL    NOT NULL,
+    created_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_markers_round ON markers(round_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_markers_unique
+    ON markers(round_id, participant_id, seq);
+
+CREATE TABLE IF NOT EXISTS model_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    image_id     INTEGER NOT NULL REFERENCES images(id),
+    mode         TEXT    NOT NULL,             -- 'freeview' | 'search'
+    target       TEXT,                         -- search target, else NULL
+    n_fixations  INTEGER NOT NULL,
+    seed         INTEGER,
+    temperature  REAL,
+    prompt_text  TEXT,
+    coords_json  TEXT    NOT NULL,             -- see spec section 6.3
+    source       TEXT    NOT NULL,             -- 'precomputed'|'live'|'pushed'
+    created_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_runs_image ON model_runs(image_id);
+
+CREATE TABLE IF NOT EXISTS app_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@contextmanager
+def connect() -> Iterator[sqlite3.Connection]:
+    config.ensure_dirs()
+    conn = sqlite3.connect(config.DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    with connect() as conn:
+        conn.executescript(SCHEMA)
+
+
+# --------------------------------------------------------------------------
+# app_state
+# --------------------------------------------------------------------------
+
+def get_state(key: str, default: Optional[str] = None) -> Optional[str]:
+    with connect() as conn:
+        row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_state(key: str, value: Any) -> None:
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO app_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, None if value is None else str(value)),
+        )
+
+
+# --------------------------------------------------------------------------
+# images
+# --------------------------------------------------------------------------
+
+def list_images(include_missing: bool = False) -> list[dict]:
+    sql = "SELECT * FROM images"
+    if not include_missing:
+        sql += " WHERE present = 1"
+    sql += " ORDER BY sort_order, filename"
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql)]
+
+
+def get_image(image_id: int) -> Optional[dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM images WHERE id = ?", (image_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def sync_images_from_disk() -> dict:
+    """Reconcile the images table with what is actually in data/images/.
+
+    Adds new files, reads their real pixel dimensions, and flags rows whose
+    file has disappeared as present=0 rather than deleting them — a round may
+    still reference the image, and losing that history to a stray file move
+    would be worse than carrying a dead row.
+    """
+    from PIL import Image  # local import: keeps startup cheap
+
+    config.ensure_dirs()
+    on_disk = {
+        p.name
+        for p in config.IMAGES_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in config.IMAGE_EXTENSIONS
+    }
+
+    added, restored, missing = [], [], []
+    with connect() as conn:
+        known = {r["filename"]: dict(r) for r in conn.execute("SELECT * FROM images")}
+
+        for name in sorted(on_disk):
+            path = config.IMAGES_DIR / name
+            if name in known:
+                if not known[name]["present"]:
+                    conn.execute("UPDATE images SET present = 1 WHERE id = ?", (known[name]["id"],))
+                    restored.append(name)
+                continue
+            try:
+                with Image.open(path) as im:
+                    width, height = im.size
+            except Exception:
+                continue  # not a readable image; ignore rather than fail the scan
+            conn.execute(
+                "INSERT INTO images (filename, label, width, height, sort_order, present, created_at) "
+                "VALUES (?, ?, ?, ?, ?, 1, ?)",
+                (name, Path(name).stem, width, height, len(known) + len(added), utcnow()),
+            )
+            added.append(name)
+
+        for name, row in known.items():
+            if name not in on_disk and row["present"]:
+                conn.execute("UPDATE images SET present = 0 WHERE id = ?", (row["id"],))
+                missing.append(name)
+
+    return {"added": added, "restored": restored, "missing": missing}
+
+
+# --------------------------------------------------------------------------
+# rounds
+# --------------------------------------------------------------------------
+
+def open_round(image_id: int, label: Optional[str] = None) -> int:
+    """Close the current round and open a fresh one for image_id."""
+    with connect() as conn:
+        current = conn.execute(
+            "SELECT id FROM rounds WHERE closed_at IS NULL ORDER BY id DESC"
+        ).fetchall()
+        for row in current:
+            conn.execute("UPDATE rounds SET closed_at = ? WHERE id = ?", (utcnow(), row["id"]))
+        cur = conn.execute(
+            "INSERT INTO rounds (image_id, label, opened_at) VALUES (?, ?, ?)",
+            (image_id, label, utcnow()),
+        )
+        round_id = cur.lastrowid
+    set_state("active_round_id", round_id)
+    set_state("active_image_id", image_id)
+    return round_id
+
+
+def get_active_round() -> Optional[dict]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM rounds WHERE closed_at IS NULL ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def count_responses(round_id: int) -> dict:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT participant_id) AS participants, COUNT(*) AS markers "
+            "FROM markers WHERE round_id = ?",
+            (round_id,),
+        ).fetchone()
+    return {"participants": row["participants"], "markers": row["markers"]}
+
+
+# --------------------------------------------------------------------------
+# control token
+# --------------------------------------------------------------------------
+
+def get_or_create_control_token() -> str:
+    if config.CONTROL_TOKEN_ENV:
+        return config.CONTROL_TOKEN_ENV
+    token = get_state("control_token")
+    if not token:
+        token = config.generate_token()
+        set_state("control_token", token)
+    return token

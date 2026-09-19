@@ -1,0 +1,25 @@
+{
+  "name": "scanpath-estimation",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  // Port 8000 must be PUBLIC so participants reach it without a GitHub login.
+  // Known issue: this sometimes does not apply until toggled by hand in the
+  // Ports panel, and can revert across a stop/start. ALWAYS verify before a
+  // session — see docs/SPEC.md section 4.3.
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "scanpath app",
+      "visibility": "public",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "postCreateCommand": "pip install --user -r requirements.txt",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "ms-python.vscode-pylance"]
+    }
+  }
+}

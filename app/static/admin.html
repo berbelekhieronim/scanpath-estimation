@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — scanpath-estimation</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="bar">
+    <div>
+      <h1>Image management</h1>
+      <div class="sub">Set which image participants see</div>
+    </div>
+    <div class="row">
+      <button id="rescan">Rescan folder</button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice"></div>
+
+  <div id="auth" class="card" style="display:none; margin-bottom:24px">
+    <div style="margin-bottom:10px">Presenter token required.</div>
+    <div class="row">
+      <input type="password" id="token" placeholder="Control token" autocomplete="off">
+      <button class="primary" id="save-token">Unlock</button>
+    </div>
+    <div class="sub" style="margin-top:10px">
+      Printed in the server console at startup.
+    </div>
+  </div>
+
+  <div id="images" class="grid"></div>
+
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const TOKEN_KEY = 'scanpath_control_token';
+
+let token = localStorage.getItem(TOKEN_KEY) || new URLSearchParams(location.search).get('k') || '';
+let activeImageId = null;
+
+function notice(msg, kind = '') {
+  const el = $('#notice');
+  el.textContent = msg || '';
+  el.className = 'notice' + (kind ? ' ' + kind : '');
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { ...(opts.headers || {}), 'X-Control-Token': token },
+  });
+  if (res.status === 403) { showAuth(true); throw new Error('Invalid token'); }
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+function showAuth(show) {
+  $('#auth').style.display = show ? '' : 'none';
+}
+
+async function checkToken() {
+  if (!token) { showAuth(true); return false; }
+  try { await api('/api/admin/token-check'); showAuth(false); return true; }
+  catch { return false; }
+}
+
+function render(images) {
+  const wrap = $('#images');
+  if (!images.length) {
+    wrap.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <p>No images yet.</p>
+      <p>Drop image files into <code>data/images/</code>, then press <strong>Rescan folder</strong>.</p>
+      <p class="sub">Accepted: .jpg .jpeg .png .webp</p>
+    </div>`;
+    return;
+  }
+  wrap.innerHTML = images.map((im) => {
+    const isActive = im.id === activeImageId;
+    return `<div class="card img-card ${isActive ? 'active' : ''}">
+      <img class="thumb" src="/img/${encodeURIComponent(im.filename)}" alt="" loading="lazy">
+      <div>
+        <div class="name">${im.label}</div>
+        <div class="dim">${im.width} × ${im.height} · ${im.filename}</div>
+      </div>
+      <div class="row">
+        ${isActive
+          ? '<span class="badge active">Active</span>'
+          : `<button data-id="${im.id}" class="set-active">Set active</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('.set-active').forEach((b) => {
+    b.addEventListener('click', () => setActive(Number(b.dataset.id)));
+  });
+}
+
+async function load() {
+  const [{ images }, state] = await Promise.all([
+    fetch('/api/images').then((r) => r.json()),
+    fetch('/api/state').then((r) => r.json()),
+  ]);
+  activeImageId = state.image ? state.image.id : null;
+  render(images);
+}
+
+async function setActive(id) {
+  try {
+    const out = await api(`/api/admin/active?image_id=${id}`, { method: 'POST' });
+    notice(`Active image is now "${out.image.label}" — a new round is open.`, 'ok');
+    await load();
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+$('#rescan').addEventListener('click', async () => {
+  try {
+    const out = await api('/api/admin/rescan', { method: 'POST' });
+    const r = out.result;
+    const bits = [];
+    if (r.added.length) bits.push(`added ${r.added.length}`);
+    if (r.restored.length) bits.push(`restored ${r.restored.length}`);
+    if (r.missing.length) bits.push(`${r.missing.length} file(s) now missing`);
+    notice(bits.length ? `Rescan: ${bits.join(', ')}.` : 'Rescan: no changes.',
+           r.missing.length ? 'warn' : 'ok');
+    await load();
+  } catch (e) { notice(e.message, 'err'); }
+});
+
+$('#save-token').addEventListener('click', async () => {
+  token = $('#token').value.trim();
+  localStorage.setItem(TOKEN_KEY, token);
+  if (await checkToken()) { notice('Unlocked.', 'ok'); await load(); }
+  else notice('That token was not accepted.', 'err');
+});
+
+$('#token').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#save-token').click();
+});
+
+(async function init() {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  await checkToken();
+  await load();
+})();
+</script>
+</body>
+</html>

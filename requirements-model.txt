@@ -1,0 +1,20 @@
+# Model inference dependencies — MacBook (Apple Silicon) ONLY.
+# Deliberately NOT installed in the Codespace: the web app never imports torch.
+#
+#   python3 -m venv .venv-model
+#   source .venv-model/bin/activate
+#   pip install -r requirements-model.txt
+#
+# Note: no vllm. It requires CUDA, which Apple Silicon does not have.
+# See docs/SPEC.md section 4.2.
+torch>=2.5.0
+transformers>=4.57.0
+peft>=0.18.0
+accelerate>=1.0.0
+safetensors>=0.7.0
+Pillow>=11.0.0
+numpy>=2.0.0
+scipy>=1.15.0
+matplotlib>=3.9.0
+tqdm>=4.67.0
+requests>=2.32.0
