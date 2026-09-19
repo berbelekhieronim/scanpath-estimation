@@ -26,3 +26,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Dev server helper artifacts
+.devserver.pid
+.devserver.log

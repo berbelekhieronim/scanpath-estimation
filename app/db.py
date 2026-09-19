@@ -287,3 +287,104 @@ def get_round_markers(round_id: int) -> list[dict]:
             (round_id,),
         )
         return [dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------
+# model runs
+# --------------------------------------------------------------------------
+
+def upsert_model_run(image_id: int, payload: dict) -> int:
+    """Store a scanpath run. One row per (image, mode, target, n_fixations).
+
+    Re-running a config replaces the previous row rather than accumulating
+    duplicates the display would then have to choose between.
+    """
+    import json
+
+    with connect() as conn:
+        conn.execute(
+            "DELETE FROM model_runs WHERE image_id = ? AND mode = ? "
+            "AND IFNULL(target,'') = ? AND n_fixations = ?",
+            (image_id, payload["mode"], payload.get("target") or "",
+             payload["n_fixations"]),
+        )
+        cur = conn.execute(
+            "INSERT INTO model_runs (image_id, mode, target, n_fixations, seed, "
+            "temperature, prompt_text, coords_json, source, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                image_id, payload["mode"], payload.get("target"),
+                payload["n_fixations"], payload.get("seed"),
+                payload.get("temperature"), payload.get("prompt_text"),
+                json.dumps(payload), payload.get("source", "precomputed"),
+                payload.get("created_at") or utcnow(),
+            ),
+        )
+        return cur.lastrowid
+
+
+def get_model_run(image_id: int, mode: str, target: Optional[str],
+                  n_fixations: Optional[int] = None) -> Optional[dict]:
+    import json
+
+    sql = ("SELECT * FROM model_runs WHERE image_id = ? AND mode = ? "
+           "AND IFNULL(target,'') = ?")
+    params: list = [image_id, mode, target or ""]
+    if n_fixations is not None:
+        sql += " AND n_fixations = ?"
+        params.append(n_fixations)
+    sql += " ORDER BY created_at DESC, id DESC LIMIT 1"
+
+    with connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+    if not row:
+        return None
+    payload = json.loads(row["coords_json"])
+    payload["run_id"] = row["id"]
+    return payload
+
+
+def list_model_runs() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT m.id, m.image_id, m.mode, m.target, m.n_fixations, "
+            "m.source, m.created_at, i.filename, i.label "
+            "FROM model_runs m JOIN images i ON i.id = m.image_id "
+            "ORDER BY i.sort_order, m.mode, m.target"
+        )
+        return [dict(r) for r in rows]
+
+
+def sync_model_runs_from_disk() -> dict:
+    """Load data/model/*.json into the model_runs table.
+
+    Files are the source of truth — they are what precompute.py writes and
+    what gets committed — and the table is a queryable index over them.
+    """
+    import json
+
+    config.ensure_dirs()
+    by_filename = {i["filename"]: i for i in list_images(include_missing=True)}
+
+    loaded, orphaned, invalid = [], [], []
+    for path in sorted(config.MODEL_DIR.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            invalid.append(path.name)
+            continue
+
+        required = {"image", "mode", "n_fixations", "scanpath_norm"}
+        if not required.issubset(payload):
+            invalid.append(path.name)
+            continue
+
+        image = by_filename.get(payload["image"])
+        if not image:
+            orphaned.append(path.name)  # run for an image no longer present
+            continue
+
+        upsert_model_run(image["id"], payload)
+        loaded.append(path.name)
+
+    return {"loaded": loaded, "orphaned": orphaned, "invalid": invalid}

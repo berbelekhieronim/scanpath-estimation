@@ -91,6 +91,29 @@
     </div>
 
     <div class="card section">
+      <h2>Model</h2>
+      <div id="model-status" class="sub" style="margin-bottom:12px">…</div>
+      <div class="row" style="margin-bottom:10px">
+        <label style="min-width:110px">Task</label>
+        <select id="model-mode" style="max-width:260px">
+          <option value="freeview">Free viewing</option>
+          <option value="search">Visual search</option>
+        </select>
+      </div>
+      <div class="row" id="target-row" style="margin-bottom:10px; display:none">
+        <label style="min-width:110px">Target</label>
+        <select id="model-target" style="max-width:260px"></select>
+      </div>
+      <div class="row">
+        <button id="rescan-model">Reload runs from disk</button>
+      </div>
+      <div class="sub" style="margin-top:10px">
+        Runs are precomputed by <code>tools/precompute.py</code>. Switching task
+        shows the matching run if one exists.
+      </div>
+    </div>
+
+    <div class="card section">
       <h2>Image</h2>
       <select id="image-select"></select>
       <div class="sub" style="margin-top:10px">
@@ -119,11 +142,14 @@ const TOKEN_KEY = 'scanpath_control_token';
 let token = localStorage.getItem(TOKEN_KEY) ||
             new URLSearchParams(location.search).get('k') || '';
 let state = null;
+const COCO_TARGETS = ['bottle','bowl','car','chair','clock','cup','fork','keyboard',
+  'knife','laptop','microwave','mouse','oven','potted plant','sink','stop sign',
+  'toilet','tv'];
 
 const LAYERS = [
   { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
   { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
-  { key: 'model',    name: 'Model scanpath', desc: 'Arrives in Phase 4', disabled: true },
+  { key: 'model',    name: 'Model scanpath', desc: 'DeepGaze3.5-VL prediction' },
   { key: 'analysis', name: 'Agreement metrics', desc: 'Arrives in Phase 5', disabled: true },
 ];
 
@@ -172,10 +198,11 @@ async function setLayer(key, on) {
 
 async function refresh() {
   try {
-    const [s, m, imgs] = await Promise.all([
+    const [s, m, imgs, model] = await Promise.all([
       fetch('/api/state').then((r) => r.json()),
       fetch('/api/markers').then((r) => r.json()),
       fetch('/api/images').then((r) => r.json()),
+      fetch('/api/model').then((r) => r.json()),
     ]);
     const first = state === null;
     state = s;
@@ -199,8 +226,67 @@ async function refresh() {
         `<option value="${im.id}">${im.label}</option>`).join('');
     }
     if (s.image) sel.value = String(s.image.id);
+
+    if ($('model-target').options.length === 0) {
+      $('model-target').innerHTML = COCO_TARGETS.map((t) =>
+        `<option value="${t}">${t}</option>`).join('');
+    }
+    if (document.activeElement !== $('model-mode')) {
+      $('model-mode').value = model.config.mode;
+      $('target-row').style.display = model.config.mode === 'search' ? '' : 'none';
+      if (model.config.target) $('model-target').value = model.config.target;
+    }
+    renderModelStatus(model);
   } catch {}
 }
+
+function renderModelStatus(model) {
+  const el = $('model-status');
+  if (!model.run) {
+    el.innerHTML = `<span style="color:var(--warn)">No run for this image and task.</span>
+      Generate one with <code>tools/precompute.py</code>, then press reload.`;
+    return;
+  }
+  const r = model.run;
+  const n = (r.samples_norm || []).length;
+  const synthetic = r.source === 'synthetic';
+  el.innerHTML =
+    (synthetic ? `<div class="notice err" style="margin-bottom:10px">
+        <strong>SYNTHETIC placeholder data</strong> — not model output. The
+        display shows a warning banner while this layer is on.</div>` : '') +
+    `${r.n_fixations} fixations · ${n} sampled observer${n === 1 ? '' : 's'} ·
+     ${r.source} · <span class="sub">${r.model}</span>`;
+}
+
+async function setModelConfig(patch) {
+  try {
+    await api('/api/control/model-config', {
+      method: 'POST', body: JSON.stringify(patch) });
+    await refresh();
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+$('model-mode').addEventListener('change', (e) => {
+  const mode = e.target.value;
+  $('target-row').style.display = mode === 'search' ? '' : 'none';
+  setModelConfig({ mode, target: mode === 'search' ? $('model-target').value : '' });
+});
+
+$('model-target').addEventListener('change', (e) =>
+  setModelConfig({ target: e.target.value }));
+
+$('rescan-model').addEventListener('click', async () => {
+  try {
+    const out = await api('/api/control/rescan-model', { method: 'POST' });
+    const r = out.result;
+    const bits = [`loaded ${r.loaded.length}`];
+    if (r.orphaned.length) bits.push(`${r.orphaned.length} orphaned`);
+    if (r.invalid.length) bits.push(`${r.invalid.length} invalid`);
+    notice('Model runs: ' + bits.join(', ') + '.',
+           r.invalid.length ? 'warn' : 'ok');
+    await refresh();
+  } catch (e) { notice(e.message, 'err'); }
+});
 
 $('image-select').addEventListener('change', async (e) => {
   try {

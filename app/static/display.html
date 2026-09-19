@@ -25,6 +25,7 @@
       <img id="photo" alt="">
       <canvas id="heat"></canvas>
       <svg id="paths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <svg id="model" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
     </div>
   </div>
 
@@ -65,12 +66,58 @@ function renderPaths(paths, show) {
   }).join('');
 }
 
-function renderLegend(layers, n) {
+function renderModel(run, show) {
+  const svg = $('model');
+  if (!show || !run) { svg.innerHTML = ''; return; }
+  const V = 1000;
+
+  // All virtual observers, faint, so the model reads as a distribution
+  // rather than one cherry-picked path.
+  const ghosts = (run.samples_norm || []).slice(1).map((pts) => {
+    const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
+    return `<polyline points="${d}" fill="none" stroke="#ff7a45"
+              stroke-opacity=".22" stroke-width="2" stroke-linejoin="round"
+              vector-effect="non-scaling-stroke"/>`;
+  }).join('');
+
+  // The primary path, drawn solid and numbered.
+  const primary = run.scanpath_norm || [];
+  const line = primary.map(([x, y]) => `${x * V},${y * V}`).join(' ');
+  const dots = primary.map(([x, y], i) => `
+      <circle cx="${x * V}" cy="${y * V}" r="15" fill="#ff7a45"
+              stroke="#fff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+      <text class="fix-num" x="${x * V}" y="${y * V}" text-anchor="middle"
+            dominant-baseline="central">${i + 1}</text>`).join('');
+
+  svg.innerHTML = ghosts + `<polyline points="${line}" fill="none"
+      stroke="#ff7a45" stroke-width="3.5" stroke-linejoin="round"
+      stroke-linecap="round" vector-effect="non-scaling-stroke"/>` + dots;
+}
+
+function renderSyntheticWarning(run, show) {
+  const existing = document.querySelector('.synthetic-warning');
+  const isSynthetic = show && run && run.source === 'synthetic';
+  document.body.classList.toggle('has-synthetic', !!isSynthetic);
+  if (!isSynthetic) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const el = document.createElement('div');
+  el.className = 'synthetic-warning';
+  el.textContent = 'SYNTHETIC PLACEHOLDER DATA — NOT MODEL OUTPUT';
+  document.body.appendChild(el);
+}
+
+function renderLegend(layers, n, run) {
   const keys = [];
   if (layers.heatmap && n) keys.push(
     `<span class="key"><span class="swatch heat"></span>where people said they'd look — fewer &rarr; more</span>`);
   if (layers.paths && n) keys.push(
     `<span class="key"><span class="swatch path"></span>individual orders, first look ringed brighter</span>`);
+  if (layers.model && run) {
+    const extra = (run.samples_norm || []).length - 1;
+    keys.push(`<span class="key"><span class="swatch model"></span>model prediction` +
+      (extra > 0 ? `, numbered, with ${extra} more sampled observers` : ', numbered') +
+      `</span>`);
+  }
   $('legend').innerHTML = keys.join('');
 }
 
@@ -86,11 +133,12 @@ function sizeCanvas() {
 }
 
 async function tick() {
-  let state, data;
+  let state, data, model;
   try {
-    [state, data] = await Promise.all([
+    [state, data, model] = await Promise.all([
       fetch('/api/state').then((r) => r.json()),
       fetch('/api/markers').then((r) => r.json()),
+      fetch('/api/model').then((r) => r.json()),
     ]);
   } catch { return; }
 
@@ -105,6 +153,7 @@ async function tick() {
   const signature = JSON.stringify([
     state.round_id, state.image.id, state.layers, data.count,
     data.paths.length && data.paths[data.paths.length - 1],
+    model.run && [model.run.run_id, model.run.source],
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -131,7 +180,9 @@ async function tick() {
   if (changed || resized) {
     drawHeatmap($('heat'), state.layers.heatmap ? data.points : []);
     renderPaths(data.paths, state.layers.paths);
-    renderLegend(state.layers, data.count);
+    renderModel(model.run, state.layers.model);
+    renderSyntheticWarning(model.run, state.layers.model);
+    renderLegend(state.layers, data.count, model.run);
   }
 }
 

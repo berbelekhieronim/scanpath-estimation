@@ -8,9 +8,11 @@ guesses are displayed on a presenter screen, then compared against a
 state-of-the-art scanpath model
 ([DeepGaze3.5-VL](https://github.com/Susmit-A/DeepGaze3.5-VL), ECCV 2026).
 
-**Status:** Phases 1–3 complete. The entire human half of the demo runs end to
-end: participants join by QR, tap, and the presenter screen shows the aggregate
-live. Next: Phase 4, the model overlay.
+**Status:** Phases 1–4 complete. Participants join by QR and tap; the presenter
+screen shows the aggregate live and can overlay the model's predicted scanpath.
+
+**The inference path has not been run against the real model** — there is no GPU
+in the environment it was written in. See *Running the model* below.
 
 ## Start here
 
@@ -91,3 +93,50 @@ pytest
    and reappear if you switch the layer back on.
 5. To run the same image with a second group, use **Start a fresh round** —
    the earlier responses are kept and stay exportable.
+
+## Running the model
+
+The model runs on your MacBook, not in the Codespace. One-time setup:
+
+```bash
+git clone https://github.com/Susmit-A/DeepGaze3.5-VL   # needs git-lfs
+python3 -m venv .venv-model && source .venv-model/bin/activate
+pip install -r requirements-model.txt
+```
+
+Confirm the prompt templates still match upstream (they are reproduced in
+`tools/gaze_prompts.py` and must stay byte-identical, since the adapter was
+fine-tuned on those exact strings):
+
+```bash
+python tools/gaze_prompts.py --verify ../DeepGaze3.5-VL
+```
+
+Single image:
+
+```bash
+python tools/predict_mps.py --repo ../DeepGaze3.5-VL \
+    --image data/images/street.jpg --mode freeview --num-fixations 5
+```
+
+Precompute everything before a session (the recommended path):
+
+```bash
+python tools/precompute.py --repo ../DeepGaze3.5-VL \
+    --modes freeview --num-fixations 5 --samples 10 --temperature 0.7
+```
+
+Results land in `data/model/` as JSON. Commit them, and the app loads them at
+boot or via **Reload runs from disk** in `/control`.
+
+First run downloads ~16GB of base model. Expect 1–3 minutes per image-config
+on MPS, or 10–20 on CPU. Slow is fine — precomputing means nothing waits on it
+during the talk.
+
+### Synthetic placeholder data
+
+`tools/precompute.py --synthetic` generates placeholder scanpaths with no model
+at all, so the display can be developed without a GPU. Its output is stamped
+`source: "synthetic"`, and the display shows a full-width red warning banner
+whenever it renders one. **Never present synthetic output as a model
+prediction** — delete `data/model/*.json` and regenerate before a real session.

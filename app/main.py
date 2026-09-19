@@ -23,6 +23,7 @@ async def lifespan(app: FastAPI):
     config.ensure_dirs()
     db.init_db()
     result = db.sync_images_from_disk()
+    model_sync = db.sync_model_runs_from_disk()
 
     token = db.get_or_create_control_token()
     images = db.list_images()
@@ -40,6 +41,16 @@ async def lifespan(app: FastAPI):
         print(f"  newly added:    {', '.join(result['added'])}")
     if result["missing"]:
         print(f"  MISSING FILES:  {', '.join(result['missing'])}")
+    print(f"  model runs:     {len(model_sync['loaded'])}")
+    if model_sync["orphaned"]:
+        print(f"  orphaned runs:  {len(model_sync['orphaned'])} "
+              f"(no matching image)")
+    if model_sync["invalid"]:
+        print(f"  INVALID RUNS:   {', '.join(model_sync['invalid'])}")
+    synthetic = [r for r in db.list_model_runs() if r["source"] == "synthetic"]
+    if synthetic:
+        print(f"\n  *** {len(synthetic)} SYNTHETIC run(s) loaded — placeholder")
+        print(f"      data, NOT model output. Badged in the UI. ***")
     if not images:
         print("  none yet — drop image files into data/images/ and restart,")
         print("  or use the Rescan button in /admin")
@@ -176,6 +187,44 @@ def api_state():
     }
 
 
+def model_config() -> dict:
+    return {
+        "mode": db.get_state("model_mode", "freeview"),
+        "target": db.get_state("model_target") or None,
+        "n_fixations": int(db.get_state("model_n_fixations", "5")),
+    }
+
+
+@app.get("/api/model")
+def api_model():
+    """The model run matching the active image and current model config.
+
+    Returns a shape with run=None rather than 404 when nothing is precomputed,
+    because 'no run yet' is an ordinary state the display renders as an empty
+    layer, not an error.
+    """
+    round_ = db.get_active_round()
+    cfg = model_config()
+    if not round_:
+        return {"run": None, "config": cfg, "reason": "no round open"}
+
+    run = db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"],
+                           cfg["n_fixations"])
+    if not run:
+        # Fall back to any fixation count for this mode/target, so a run made
+        # at a different length still shows rather than silently missing.
+        run = db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"])
+    if not run:
+        return {"run": None, "config": cfg,
+                "reason": "no precomputed run for this image and configuration"}
+    return {"run": run, "config": cfg}
+
+
+@app.get("/api/model/runs")
+def api_model_runs():
+    return {"runs": db.list_model_runs()}
+
+
 @app.get("/api/markers")
 def api_markers():
     """Every response for the open round, grouped into per-participant paths.
@@ -293,6 +342,24 @@ def api_set_layers(payload: dict, _: str = Depends(require_token)):
     for name, on in payload.items():
         LAYERS.set(name, bool(on))
     return {"layers": LAYERS.current()}
+
+
+@app.post("/api/control/model-config")
+def api_set_model_config(payload: dict, _: str = Depends(require_token)):
+    if "mode" in payload:
+        if payload["mode"] not in ("freeview", "search"):
+            raise HTTPException(status_code=400, detail="mode must be freeview or search")
+        db.set_state("model_mode", payload["mode"])
+    if "target" in payload:
+        db.set_state("model_target", payload["target"] or "")
+    if "n_fixations" in payload:
+        db.set_state("model_n_fixations", int(payload["n_fixations"]))
+    return {"config": model_config()}
+
+
+@app.post("/api/control/rescan-model")
+def api_rescan_model(_: str = Depends(require_token)):
+    return {"result": db.sync_model_runs_from_disk(), "runs": db.list_model_runs()}
 
 
 @app.post("/api/control/reset-round")
