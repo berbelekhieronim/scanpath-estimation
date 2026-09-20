@@ -181,7 +181,12 @@ const LAYER_GROUPS = [
   { title: 'Overlays', layers: [
     { key: 'analysis', name: 'Agreement metrics', desc: 'Comparison with baselines' },
     { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was asked, in full' },
-    { key: 'json',     name: 'Raw data (JSON)', desc: 'Full-screen overlay of the data' },
+  ]},
+  /* These two take over the whole display, so the server turns one off when
+     the other goes on. Grouped apart so that is not a surprise. */
+  { title: 'Full screen — replaces the image', layers: [
+    { key: 'charts', name: 'Comparison charts', desc: 'Tapped vs measured vs model, and the gap between them' },
+    { key: 'json',   name: 'Raw data (JSON)',   desc: 'Everything the display is drawn from' },
   ]},
 ];
 const LAYERS = LAYER_GROUPS.flatMap((g) => g.layers);

@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -98,7 +98,13 @@ class LAYERS:
     """Layer visibility. 'Clear' hides a layer; it never deletes data."""
 
     KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
-            "prompt": "0", "json": "0", "gaze": "0", "gaze_paths": "0"}
+            "prompt": "0", "json": "0", "gaze": "0", "gaze_paths": "0",
+            "charts": "0"}
+
+    # Each of these takes over the whole screen, so two of them on at once
+    # means one is silently hidden behind the other. Enforced here rather than
+    # in the control page, because the display is what has the constraint.
+    EXCLUSIVE = ("json", "charts")
 
     @classmethod
     def current(cls) -> dict:
@@ -112,6 +118,10 @@ class LAYERS:
         if name not in cls.KEYS:
             raise HTTPException(status_code=400, detail=f"Unknown layer: {name}")
         db.set_state(f"layer_{name}", "1" if on else "0")
+        if on and name in cls.EXCLUSIVE:
+            for other in cls.EXCLUSIVE:
+                if other != name:
+                    db.set_state(f"layer_{other}", "0")
 
 
 # --------------------------------------------------------------------------
@@ -960,6 +970,39 @@ def api_reset_round(_: str = Depends(require_token)):
 @app.get("/api/admin/token-check")
 def api_token_check(_: str = Depends(require_token)):
     return {"ok": True}
+
+
+@app.exception_handler(404)
+def not_found(request: Request, exc):
+    """Say *why* a page is missing when the reason is a stale process.
+
+    Routes are registered when Python imports this module; static files are
+    read from disk per request. So after a `git pull` the pages and the links
+    to them update at once while the running server still serves the route
+    table it started with, and a brand-new page answers a bare "Not Found"
+    that looks like a bug in the page. It has cost two debugging sessions
+    already, so that one case now explains itself.
+
+    Only that case. A 404 an endpoint raised on purpose already says
+    something more useful than anything guessable from here, and is passed
+    through untouched.
+    """
+    detail = getattr(exc, "detail", None)
+    if detail and detail != "Not Found":
+        return JSONResponse(status_code=404, content={"detail": detail})
+
+    fresh = _server_freshness()
+    if fresh["stale"]:
+        return JSONResponse(status_code=404, content={
+            "detail": f"No route {request.url.path} — but this server has "
+                      f"been running {fresh['uptime_seconds'] // 60} minutes "
+                      f"and the code on disk is newer than the process. "
+                      f"Restart it (Ctrl-C, then ./tools/devserver.sh) and "
+                      f"try again.",
+            "stale_server": True,
+        })
+    return JSONResponse(status_code=404,
+                        content={"detail": f"No route {request.url.path}"})
 
 
 # --------------------------------------------------------------------------

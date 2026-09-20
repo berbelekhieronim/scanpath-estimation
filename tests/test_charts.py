@@ -20,6 +20,7 @@ from PIL import Image
 from app import analysis as A
 
 STATIC = Path(__file__).resolve().parent.parent / "app" / "static"
+MODULE = STATIC / "charts.js"
 AUTH = {"X-Control-Token": "test-token"}
 
 TOP_LEFT = [[0.12, 0.12], [0.16, 0.10], [0.10, 0.17]]
@@ -203,30 +204,29 @@ def test_charts_page_is_served(client):
 
 # --- the page's own guarantees -------------------------------------------
 
-def test_page_uses_only_validated_series_colours():
+def test_charts_use_only_validated_series_colours():
     """The hues are checked by running the validator; this pins the result.
 
     Dark slots pass all-pairs CVD 9.4 / normal-vision 20.9 on #1c1e28; the
     light set swaps only the blue. The display's older #5b8cff/#b06bff pair
     failed both gates, so it must not come back here by copy-paste.
     """
-    page = (STATIC / "charts.html").read_text()
+    module = MODULE.read_text()
     for hexcode in ("#3987e5", "#d95926", "#199e70", "#2a78d6"):
-        assert hexcode in page
+        assert hexcode in module
     for failed in ("#b06bff", "#5b8cff", "#ff7a45"):
-        assert failed not in page
+        assert failed not in module
 
 
 def test_page_offers_a_table_view_and_a_legend():
     page = (STATIC / "charts.html").read_text()
-    assert 'id="table"' in page and "renderTable" in page
-    assert 'id="legend"' in page and "renderLegend" in page
+    assert 'id="table"' in page and "numbersTable" in page
+    assert 'id="legend"' in page and "legendRow" in page
 
 
 def test_diverging_scale_has_a_neutral_midpoint():
     """A hue in the middle would make "no difference" look like a finding."""
-    page = (STATIC / "charts.html").read_text()
-    mids = re.findall(r'mid:\s*"(#[0-9a-f]{6})"', page)
+    mids = re.findall(r'mid:\s*"(#[0-9a-f]{6})"', MODULE.read_text())
     assert mids, "no diverging midpoint declared"
     for m in mids:
         r, g, b = (int(m[i:i + 2], 16) for i in (1, 3, 5))
@@ -235,13 +235,73 @@ def test_diverging_scale_has_a_neutral_midpoint():
 
 def test_cell_names_follow_the_grid_size():
     """?grid=4 once produced a 4x4 whose second cell was called "top-centre"."""
-    page = (STATIC / "charts.html").read_text()
-    assert "cellNames(DATA.grid)" in page
-    assert "function cellNames(n)" in page
+    module = MODULE.read_text()
+    assert "export function cellNames(n)" in module
+    assert "cellNames(data.grid)" in module
     # The grid size in the prose is set from the response, not typed in.
-    assert 'id="grid-name"' in page
+    assert 'id="grid-name"' in (STATIC / "charts.html").read_text()
 
 
 def test_page_forwards_grid_and_sigma_to_the_endpoint():
     page = (STATIC / "charts.html").read_text()
-    assert '["grid", "sigma"]' in page
+    assert "['grid', 'sigma']" in page
+
+
+def test_the_two_full_screen_layers_cannot_both_be_on(client):
+    """Either would hide the other, so turning one on turns the other off."""
+    client.post("/api/control/layers", json={"json": True}, headers=AUTH)
+    assert client.get("/api/state").json()["layers"]["json"] is True
+
+    out = client.post("/api/control/layers", json={"charts": True},
+                      headers=AUTH).json()
+    assert out["layers"]["charts"] is True
+    assert out["layers"]["json"] is False
+
+    out = client.post("/api/control/layers", json={"json": True},
+                      headers=AUTH).json()
+    assert out["layers"]["json"] is True
+    assert out["layers"]["charts"] is False
+
+
+def test_turning_a_full_screen_layer_off_leaves_the_other_alone(client):
+    client.post("/api/control/layers", json={"charts": True}, headers=AUTH)
+    out = client.post("/api/control/layers", json={"charts": False},
+                      headers=AUTH).json()
+    assert out["layers"]["charts"] is False
+    assert out["layers"]["json"] is False
+
+
+def test_image_overlays_are_untouched_by_the_full_screen_rule(client):
+    client.post("/api/control/layers", json={"gaze": True, "paths": True},
+                headers=AUTH)
+    out = client.post("/api/control/layers", json={"charts": True},
+                      headers=AUTH).json()
+    assert out["layers"]["gaze"] is True and out["layers"]["paths"] is True
+
+
+def test_display_draws_the_charts_from_the_shared_module(client):
+    """Two screens, one copy of the drawing code — or they drift apart."""
+    page = (STATIC / "display.html").read_text()
+    assert "/static/charts.js" in page
+    assert "renderCharts(state.layers.charts)" in page
+    # The projected view deliberately omits the table and the dot plot.
+    assert "numbersTable" not in page and "dotPlot" not in page
+
+
+def test_a_stale_server_explains_its_own_404(client, monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "_server_freshness",
+                        lambda: {"stale": True, "uptime_seconds": 3600,
+                                 "started_at": 0, "code_mtime": 1})
+    body = client.get("/charts-that-do-not-exist").json()
+    assert body["stale_server"] is True
+    assert "Restart it" in body["detail"]
+
+
+def test_a_deliberate_404_keeps_its_own_message(client):
+    """The stale-server hint must not overwrite a real explanation."""
+    r = client.post("/api/model/push", headers=AUTH, json={
+        "image": "nope.jpg", "mode": "freeview", "n_fixations": 5,
+        "scanpath_norm": [[0.5, 0.5]]})
+    assert r.status_code == 404
+    assert "nope.jpg" in r.json()["detail"]

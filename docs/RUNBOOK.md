@@ -268,6 +268,13 @@ It refreshes every five seconds, so it can be left open while the session
 runs. It says so on the page when the model run is synthetic, when a group has
 fewer than four people, and how many calibrations were excluded.
 
+**To project it**, turn on **Comparison charts** under *Full screen* in
+Controls. The display then shows the panels, the difference map and one
+headline sentence at projector size — no table, no dot plot, nothing to hover.
+Charts and Raw data (JSON) are mutually exclusive: turning one on turns the
+other off, because each takes over the whole screen. Turn it off and the image
+comes back with its overlays exactly as you left them.
+
 `?grid=4` or `?sigma=0.25` change the grid and the blur if you want to see how
 sensitive the picture is. **Do not present a grid finer than 3 × 3**: webcam
 gaze on a phone is accurate to about a fifth of the screen width, which is

@@ -259,3 +259,35 @@ than four people and the ceiling cannot be estimated, and reports excluded
 calibrations rather than dropping them. §5's "should wait" and "blocked"
 items are unchanged — no inferential test is computed, and every model number
 on the page is still a number about noise.
+
+
+---
+
+## 8. Two screens, one copy of the code (2026-09-20)
+
+The charts are drawn on the projected display as well, as a layer the
+presenter toggles from the control page like any other. Two screens showing
+the same comparison could quietly disagree about what the data says, so the
+drawing code is a single ES module (`app/static/charts.js`) and the
+differences between the screens are options passed to it, not second copies.
+
+**The projected view shows less on purpose.** It carries the three density
+panels, the difference map, the legend and one plain-language headline
+sentence. It leaves out the dot plot, the numbers table and every tooltip:
+nobody hovers a mark or reads a nine-row table from the back of a room, and
+including them would only make the two images that do work smaller. The
+caveats stay — a synthetic model run and the count of excluded calibrations
+are named in the footer, at projector size.
+
+**Charts and raw JSON are mutually exclusive**, enforced in `LAYERS.set`
+rather than in the control page, because it is the display that has the
+constraint: both take over the whole screen, so two on at once means one is
+invisible behind the other. Turning either on turns the other off. The image
+overlays (heatmap, scanpaths, model, gaze) are untouched by the rule and keep
+their state while a full-screen layer is up.
+
+**The colour scale's direction flips with the mode**, and the captions follow
+it. On a light page near-zero is the light end of the blue ramp, so darker
+means more; on a dark page near-zero is the dark end, so lighter means more.
+The word in the caption is derived from the mode (`MORE_IS`), because a
+hard-coded "darker means more" is wrong half the time — it was, briefly.

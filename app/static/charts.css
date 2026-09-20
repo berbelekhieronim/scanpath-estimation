@@ -1,0 +1,68 @@
+/* Shared chart furniture. Loaded by both /charts (the analysis page, read at
+   arm's length) and /display (the projected screen, read from the back of a
+   room). Only the type sizes differ between them; the marks do not, so they
+   live here once. */
+
+.panels { display: grid; gap: 16px;
+          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.panel { background: var(--surface); border: 1px solid var(--border);
+         border-radius: var(--radius); padding: 14px; }
+.panel h3 { margin: 0 0 2px; font-size: 0.9375rem; display: flex;
+            align-items: center; gap: 8px; }
+.panel h3 .dot { width: 10px; height: 10px; border-radius: 3px;
+                 flex: 0 0 auto; }
+.panel .who { color: var(--muted); font-size: 0.8125rem; margin-bottom: 10px; }
+.panel svg { width: 100%; height: auto; display: block; }
+.panel.empty { display: flex; flex-direction: column; justify-content: center;
+               color: var(--muted); font-size: 0.875rem; min-height: 180px; }
+
+.scale { display: flex; align-items: center; gap: 10px; margin-top: 12px;
+         font-size: 0.75rem; color: var(--muted); }
+.scale .bar { flex: 1; height: 10px; border-radius: 3px; }
+
+.chart-legend { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; }
+.chart-legend .item { display: flex; align-items: center; gap: 8px;
+                      font-size: 0.875rem; }
+.chart-legend .dot { width: 12px; height: 12px; border-radius: 3px;
+                     flex: 0 0 auto; }
+.chart-legend .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.chart-legend .item.off { opacity: .4; }
+
+.diff-row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+.diff-row .map { flex: 0 1 330px; min-width: 240px; }
+.diff-row .key { flex: 1 1 260px; }
+
+.chart-table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+.chart-table th, .chart-table td {
+  text-align: right; padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.chart-table th:first-child, .chart-table td:first-child {
+  text-align: left; font-variant-numeric: normal;
+}
+.chart-table thead th { color: var(--muted); font-weight: 600;
+                        font-size: 0.8125rem; }
+.chart-table td.na { color: var(--muted); }
+
+.swatch { display: inline-block; width: 10px; height: 10px;
+          border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+
+.note { color: var(--muted); font-size: 0.8125rem; margin-top: 10px; }
+
+/* A plot squeezed to phone width stops being readable long before it stops
+   fitting, so below its natural width it scrolls sideways instead of
+   shrinking. The table view carries the same numbers either way. */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.scroll-x > svg { min-width: 620px; }
+.scroll-x > .chart-table { min-width: 560px; }
+
+.chart-tip {
+  position: fixed; z-index: 90; pointer-events: none;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 11px; font-size: 0.8125rem;
+  box-shadow: 0 6px 24px rgba(0,0,0,.45); max-width: 240px;
+  color: var(--text);
+}
+.chart-tip .k { color: var(--muted); }
+.chart-tip strong { font-variant-numeric: tabular-nums; }

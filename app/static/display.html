@@ -6,6 +6,7 @@
 <meta name="robots" content="noindex">
 <title>Display — scanpath-estimation</title>
 <link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/charts.css">
 <link rel="stylesheet" href="/static/display.css">
 </head>
 <body>
@@ -37,6 +38,10 @@
 
 <script type="module">
 import { drawHeatmap } from '/static/heatmap.js';
+import {
+  densityPanels, sequentialScale, differenceMap, legendRow, headlineText,
+  MORE_IS,
+} from '/static/charts.js';
 
 const $ = (id) => document.getElementById(id);
 let lastSignature = '';
@@ -276,6 +281,95 @@ async function renderJson(show) {
   document.getElementById('json-body').innerHTML = highlight(raw[jsonTab]);
 }
 
+/* The charts, projected. A deliberately smaller selection than /charts: no
+   table, no dot plot, no tooltips. Nobody reads a nine-row table or hovers a
+   mark from the back of a room, and putting them up there would only make the
+   two images that do work smaller. */
+async function renderCharts(show) {
+  let el = document.getElementById('charts-overlay');
+  if (!show) { if (el) el.remove(); return; }
+
+  let d;
+  try { d = await fetch('/api/compare/maps', {cache: 'no-store'}).then((r) => r.json()); }
+  catch { return; }
+
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'charts-overlay';
+    el.id = 'charts-overlay';
+    document.body.appendChild(el);
+  }
+  el.textContent = '';
+
+  const h2 = document.createElement('h2');
+  h2.textContent = 'Where people said they would look, and where they looked';
+  el.appendChild(h2);
+
+  if (!d.ok) {
+    const p = document.createElement('div');
+    p.className = 'headline';
+    p.textContent = d.reason === 'no round open'
+      ? 'No round is open.'
+      : 'Nothing to compare yet — the charts fill in as people finish.';
+    el.appendChild(p);
+    return;
+  }
+
+  const head = document.createElement('div');
+  head.className = 'headline';
+  head.textContent = headlineText(d);
+  el.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'cbody';
+
+  const main = document.createElement('div');
+  main.className = 'cmain';
+  const mcap = document.createElement('p');
+  mcap.className = 'caption';
+  mcap.textContent = 'Each grid is one group\u2019s attention, averaged per '
+    + 'person, on one shared colour scale \u2014 ' + MORE_IS
+    + ' means more looked at.';
+  main.appendChild(mcap);
+  main.appendChild(densityPanels(d, {hover: false}));
+  main.appendChild(sequentialScale());
+  body.appendChild(main);
+
+  const diff = differenceMap(d, {hover: false, key: false});
+  if (diff) {
+    const side = document.createElement('div');
+    side.className = 'cside';
+    const scap = document.createElement('p');
+    scap.className = 'caption';
+    scap.textContent = 'The gap: measured minus tapped. Red is looked at more '
+      + 'than people expected, blue is expected more than looked at.';
+    side.appendChild(scap);
+    side.appendChild(diff);
+    body.appendChild(side);
+  }
+  el.appendChild(body);
+
+  const foot = document.createElement('div');
+  foot.className = 'cfoot';
+  foot.appendChild(legendRow(d));
+  // The same caveats the analysis page carries. A projected chart is the one
+  // that most needs to say when it is not yet evidence.
+  const caveats = [];
+  if (d.model_source && String(d.model_source).includes('synthetic')) {
+    caveats.push('Model panel is a placeholder, not model output');
+  }
+  if (d.gaze_excluded) {
+    caveats.push(d.gaze_excluded + ' calibration(s) excluded');
+  }
+  if (caveats.length) {
+    const w = document.createElement('div');
+    w.className = 'cwarn';
+    w.textContent = caveats.join(' · ');
+    foot.appendChild(w);
+  }
+  el.appendChild(foot);
+}
+
 function fmt(v, digits = 2) {
   return (v === null || v === undefined) ? '—' : Number(v).toFixed(digits);
 }
@@ -426,6 +520,7 @@ async function tick() {
     state.layers.prompt && model.config && model.config.prompt_text,
     state.layers.gaze && gaze.contributors,
     state.layers.gaze_paths && gaze.contributors,
+    state.layers.charts && [data.count, gaze.contributors],
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -448,6 +543,7 @@ async function tick() {
   renderExplain(state, data, gaze, model.run);
 
   renderJson(state.layers.json);
+  renderCharts(state.layers.charts);
 
   const resized = sizeCanvas();
   if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick

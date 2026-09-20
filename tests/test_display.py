@@ -72,7 +72,7 @@ def test_default_layers(client):
     layers = client.get("/api/state").json()["layers"]
     assert layers == {"heatmap": True, "paths": False, "model": False,
                       "analysis": False, "prompt": False, "json": False,
-                      "gaze": False, "gaze_paths": False}
+                      "gaze": False, "gaze_paths": False, "charts": False}
 
 
 def test_layers_toggle_and_persist(client):
