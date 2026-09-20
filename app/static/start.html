@@ -181,8 +181,21 @@ async function refresh() {
          s.model_runs.synthetic ? 'warn' : (s.model_runs.count ? 'ok' : 'warn')),
   ];
   $('ready').innerHTML = cards.join('');
-  $('warnings').innerHTML = s.warnings.map((w) =>
-    `<div class="warn-item ${w.level}">${w.text}</div>`).join('');
+
+  // A stale process serves fresh pages from disk while running old Python,
+  // so the UI offers features the backend does not have. Loud, because it
+  // looks like a dozen unrelated bugs.
+  const stale = s.server && s.server.stale
+    ? [`<div class="warn-item error"><strong>The server is running older code
+        than what is on disk.</strong> Pages update from disk instantly but
+        Python does not — restart it, or the interface will offer things the
+        backend rejects.<br>
+        <code>tools/devserver.sh restart</code>, or Ctrl-C and rerun uvicorn.
+        Add <code>--reload</code> during development to avoid this.</div>`]
+    : [];
+
+  $('warnings').innerHTML = stale.concat(s.warnings.map((w) =>
+    `<div class="warn-item ${w.level}">${w.text}</div>`)).join('');
   $('join').innerHTML = s.join_url_reachable ? s.join_url
     : `${s.join_url} <span style="color:var(--danger)">— only this machine can open that</span>`;
 }

@@ -206,3 +206,39 @@ def test_collected_eye_patches_are_copied():
     the end of calibration would fit on whatever the last frame contained."""
     tr = (STATIC / "gaze" / "tracker.js").read_text()
     assert "new ImageData(new Uint8ClampedArray(src.data)" in tr
+
+
+# --- upload must not discard a completed recording ------------------------
+
+def test_samples_upload_by_participant_uuid_when_the_id_is_lost(client):
+    """The id used to travel in localStorage; if that write was lost the
+    recording was discarded with 'recorded, but not saved'."""
+    calibrate(client, uuid="participant-0001")
+    r = client.post("/api/gaze/samples", json={
+        "session_id": None, "participant_uuid": "participant-0001",
+        "samples": samples(12)})
+    assert r.status_code == 200 and r.json()["saved"] == 12
+    assert len(client.get("/api/gaze/aggregate").json()["points"]) == 12
+
+
+def test_upload_prefers_the_session_id_when_both_are_given(client):
+    sid = calibrate(client, uuid="participant-0001")
+    calibrate(client, uuid="participant-0001")      # a second, later session
+    r = client.post("/api/gaze/samples", json={
+        "session_id": sid, "participant_uuid": "participant-0001",
+        "samples": samples(4)})
+    assert r.json()["session_id"] == sid
+
+
+def test_upload_without_any_calibration_is_still_refused(client):
+    r = client.post("/api/gaze/samples", json={
+        "participant_uuid": "never-calibrated-0001", "samples": samples(3)})
+    assert r.status_code == 404
+
+
+def test_the_page_holds_the_session_id_in_memory(client):
+    """Calibration and viewing are one page now, so nothing needs to carry it
+    across a navigation."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "let gazeSessionId = null;" in src
+    assert "participant_uuid: participantUuid()" in src

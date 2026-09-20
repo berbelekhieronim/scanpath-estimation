@@ -114,3 +114,29 @@ def test_a_ready_server_has_no_error_warnings(env, monkeypatch):
         s = c.get("/api/status").json()
         assert s["join_url_reachable"] is True
         assert [w for w in s["warnings"] if w["level"] == "error"] == []
+
+
+# --- stale process detection ----------------------------------------------
+
+def test_status_reports_whether_the_process_is_older_than_the_code(env):
+    """Static files are read from disk per request, so a pull updates the UI
+    while Python keeps running what it imported at startup. That presents as
+    a dozen unrelated bugs — 'Unknown layer: gaze' being one."""
+    with start(with_image(env)) as c:
+        srv = c.get("/api/status").json()["server"]
+        assert {"started_at", "uptime_seconds", "code_mtime", "stale"} <= set(srv)
+        assert srv["stale"] is False
+
+
+def test_stale_server_is_flagged(env, monkeypatch):
+    with start(with_image(env)) as c:
+        from app import main
+        monkeypatch.setattr(main, "_STARTED_AT", 0.0)   # process "started" in 1970
+        assert c.get("/api/status").json()["server"]["stale"] is True
+
+
+def test_start_page_warns_about_a_stale_server():
+    src = (Path(__file__).resolve().parent.parent
+           / "app" / "static" / "start.html").read_text()
+    assert "running older code" in src
+    assert "devserver.sh restart" in src

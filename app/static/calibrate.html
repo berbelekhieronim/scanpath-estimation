@@ -161,6 +161,14 @@ function participantUuid() {
 
 let tracker = null, calib = null, attempts = 0;
 
+/* The gaze session id for this run.
+ *
+ * Held in a variable because calibration and viewing are now the same page,
+ * so there is nothing to carry it across. localStorage is written as a
+ * belt-and-braces fallback only; relying on it was how a completed recording
+ * ended up with nowhere to go. */
+let gazeSessionId = null;
+
 /* Crash-resilient reporting.
  *
  * When the tab is killed mid-run — which is what "a problem repeatedly
@@ -393,9 +401,11 @@ async function report(result) {
       }),
     });
     const body = await sessionResponse.json();
-    // The viewing stage needs this id to attach its samples to.
     if (body && body.session_id) {
-      localStorage.setItem('scanpath_gaze_session_id', String(body.session_id));
+      gazeSessionId = body.session_id;
+      try {
+        localStorage.setItem('scanpath_gaze_session_id', String(body.session_id));
+      } catch {}
     }
   } catch { /* the result still gets shown; storage is best-effort here */ }
   crumb('done');
@@ -539,22 +549,24 @@ async function runViewingStage() {
 }
 
 async function uploadSamples(samples, durationMs, blinks, offImage) {
-  const id = Number(localStorage.getItem('scanpath_gaze_session_id'));
+  let id = gazeSessionId;
+  if (!id) {
+    try { id = Number(localStorage.getItem('scanpath_gaze_session_id')) || null; }
+    catch { id = null; }
+  }
   const onImage = samples.filter((s) => s.on_image).length;
   const rate = durationMs ? (samples.length / (durationMs / 1000)).toFixed(1) : '—';
   const detail = `<p style="font-size:.75rem">${samples.length} samples at
      ${rate}/s${blinks ? `, ${blinks} blinks` : ''}${
      offImage ? `, ${offImage} off the picture` : ''}.</p>`;
 
-  if (!id) {
-    overlay('Recorded, but not saved',
-      `<p>This device has no calibration on record.</p>${detail}`, null);
-    return;
-  }
+  // Send the uuid too. If the id went missing the server resolves the
+  // calibration from the participant instead of discarding the recording.
   try {
     const res = await fetch('/api/gaze/samples', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: id, samples,
+      body: JSON.stringify({ session_id: id || null,
+        participant_uuid: participantUuid(), samples,
         duration_ms: Math.round(durationMs), blinks, off_image: offImage }),
     });
     if (!res.ok) throw new Error(String(res.status));

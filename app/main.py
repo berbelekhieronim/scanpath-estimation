@@ -7,6 +7,7 @@ placeholders so the URL structure is settled from the start.
 
 import io
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -200,6 +201,32 @@ def favicon():
 # Public API
 # --------------------------------------------------------------------------
 
+_STARTED_AT = time.time()
+
+
+def _server_freshness() -> dict:
+    """Is the running process older than the code on disk?
+
+    Static files are read from disk on every request, so a pull updates the
+    pages immediately while the Python process keeps running whatever it
+    imported at startup. The result is a UI offering features the backend has
+    never heard of, which is confusing in a way that wastes a whole test
+    cycle. Cheap to detect, so it is detected.
+    """
+    newest = 0.0
+    for path in (config.BASE_DIR / "app").rglob("*.py"):
+        try:
+            newest = max(newest, path.stat().st_mtime)
+        except OSError:
+            continue
+    return {
+        "started_at": _STARTED_AT,
+        "uptime_seconds": int(time.time() - _STARTED_AT),
+        "code_mtime": newest,
+        "stale": newest > _STARTED_AT + 1,
+    }
+
+
 @app.get("/api/status")
 def api_status(request: Request):
     """Everything the start page needs to say whether the app is ready.
@@ -257,6 +284,7 @@ def api_status(request: Request):
     conditions = db.assignment_counts(round_["id"]) if round_ else None
 
     return {
+        "server": _server_freshness(),
         "capture_mode": db.get_state("capture_mode", "tap"),
         "conditions": conditions,
         "gaze": {
@@ -605,7 +633,13 @@ def api_gaze_session(session: GazeSession, request: Request):
 
 
 class GazeSamples(BaseModel):
-    session_id: int
+    # Either identifier works. The session id is preferred, but it used to be
+    # carried between stages in localStorage, and if that write was lost the
+    # recording had nowhere to go — the participant saw "recorded, but not
+    # saved" with their data discarded. A uuid fallback means a completed
+    # viewing is never thrown away.
+    session_id: Optional[int] = None
+    participant_uuid: Optional[str] = None
     samples: list[dict] = Field(max_length=2000)
     duration_ms: Optional[int] = None
     blinks: Optional[int] = None
@@ -631,17 +665,21 @@ def api_gaze_samples(payload: GazeSamples):
     would lose a partial recording and leave no way to tell a short window
     from a truncated one.
     """
-    sess = db.get_gaze_session(payload.session_id)
+    sess = db.get_gaze_session(payload.session_id) if payload.session_id else None
+    if not sess and payload.participant_uuid:
+        sess = db.latest_gaze_session_for(payload.participant_uuid)
     if not sess:
-        raise HTTPException(status_code=404, detail="Unknown gaze session")
+        raise HTTPException(
+            status_code=404,
+            detail="No calibration on record for this participant")
 
-    n = db.save_gaze_samples(payload.session_id, payload.samples)
+    n = db.save_gaze_samples(sess["id"], payload.samples)
     round_ = db.get_active_round()
     if round_ and not sess["excluded"]:
         db.mark_completed(round_["id"], sess["participant_id"])
     return {
         "saved": n,
-        "session_id": payload.session_id,
+        "session_id": sess["id"],
         "excluded": bool(sess["excluded"]),
         "stats": db.gaze_session_stats(round_["id"] if round_ else None),
     }

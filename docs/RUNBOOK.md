@@ -59,6 +59,17 @@ with `/start`:
   control token:  C5ufh8ZJ4MwP
 ```
 
+**After every `git pull`, restart the server.** Pages are read from disk on
+each request, so a pull updates the interface immediately — but Python keeps
+running whatever it imported at startup. The result is an interface offering
+features the backend has never heard of, which presents as several unrelated
+bugs at once. `/start` detects this and says so in red, but the cheapest fix is
+to add `--reload` while developing:
+
+```bash
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
 **Copy the token.** You need it for `/control`, `/admin` and the tools. It is
 stored in the database, so it stays the same across restarts.
 
@@ -274,6 +285,8 @@ participant responses are the only thing here that cannot be regenerated.
 | Ceiling shows "—" | Fewer than 12 responses |
 | Display frozen | Check the terminal is still running and the Codespace has not idled out |
 | Not sure what is running | Open `/start` — it shows live status and warns about anything not ready |
+| "Unknown layer" or a control that does nothing | The server is running older code than the pages. Restart it — see above |
+| "Recorded, but not saved" | Should no longer happen: the upload now falls back to the participant id. If it does, the device has no calibration on record at all |
 | Codespace idled out | Restart it (~30s). Data and URL survive. **Re-check the port is Public** |
 | Phones show an old image | They poll every few seconds; give it a moment |
 

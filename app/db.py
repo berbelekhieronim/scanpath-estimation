@@ -525,6 +525,17 @@ def get_gaze_session(session_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def latest_gaze_session_for(participant_uuid: str) -> Optional[dict]:
+    """Most recent usable calibration for a participant, by uuid."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT g.* FROM gaze_sessions g JOIN participants p "
+            "ON p.id = g.participant_id WHERE p.uuid = ? "
+            "ORDER BY g.excluded ASC, g.id DESC LIMIT 1",
+            (participant_uuid,)).fetchone()
+    return dict(row) if row else None
+
+
 def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
     """Pooled on-image gaze for a round, plus per-session paths.
 
