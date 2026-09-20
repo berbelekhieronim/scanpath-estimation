@@ -14,10 +14,7 @@
 
   <div class="topbar">
     <div class="title" id="title">…</div>
-    <div class="tally">
-      <span class="n" id="count">0</span>
-      <span class="lbl" id="count-label">responses</span>
-    </div>
+    <div class="tallies" id="tallies"></div>
   </div>
 
   <div class="stage" id="stage">
@@ -31,6 +28,7 @@
     </div>
   </div>
 
+  <div class="explain" id="explain"></div>
   <div class="prompt-panel" id="prompt-panel" hidden></div>
   <div class="analysis" id="analysis" hidden></div>
   <div class="legend" id="legend"></div>
@@ -79,6 +77,50 @@ function renderGaze(data, show) {
   // Measured gaze is coarse — roughly a fifth of the screen in error — so it
   // is drawn as a density cloud rather than points pretending to precision.
   drawHeatmap(c, data.points, 0.12);
+}
+
+/* Both groups, always. The presenter needs to see the split filling up, and
+   an audience understands "18 tapped, 11 eye-tracked" immediately. */
+function renderTallies(state, taps, gaze) {
+  const items = [];
+  const mode = state.capture_mode;
+  if (mode !== 'gaze') {
+    items.push(`<span class="tally-item tap"><span class="n">${taps.count}</span>
+      <span class="lbl">tapped</span></span>`);
+  }
+  if (mode !== 'tap') {
+    items.push(`<span class="tally-item gaze"><span class="n">${gaze.contributors}</span>
+      <span class="lbl">eye-tracked${gaze.excluded
+        ? ` <span style="opacity:.7">(${gaze.excluded} not usable)</span>` : ''}</span></span>`);
+  }
+  $('tallies').innerHTML = items.join('');
+}
+
+/* A caption, in words, for whatever is currently switched on.
+   Without it a projected heatmap is just a coloured blob. */
+function renderExplain(state, taps, gaze, run) {
+  const L = state.layers;
+  const on = [];
+  if (L.heatmap && taps.count) on.push(
+    `<span class="kn"><span class="dot tap"></span><strong>Warm areas</strong>:
+     where ${taps.count} people <em>predicted</em> they would look</span>`);
+  if (L.paths && taps.count) on.push(
+    `<span class="kn"><span class="dot tap"></span><strong>Thin lines</strong>:
+     the order each person tapped</span>`);
+  if (L.gaze && gaze.contributors) on.push(
+    `<span class="kn"><span class="dot gaze"></span><strong>Purple cloud</strong>:
+     where ${gaze.contributors} people <em>actually looked</em>, measured by camera</span>`);
+  if (L.gaze_paths && gaze.contributors) on.push(
+    `<span class="kn"><span class="dot gaze"></span><strong>Purple traces</strong>:
+     each person's eye path, starting at the white ring</span>`);
+  if (L.model && run) on.push(
+    `<span class="kn"><span class="dot model"></span><strong>Orange numbered path</strong>:
+     what the model predicts a human would do</span>`);
+
+  $('explain').innerHTML = on.length
+    ? on.join('')
+    : `<span class="none">Nothing overlaid yet — this is the picture as the
+       room sees it.</span>`;
 }
 
 function renderGazePaths(data, show) {
@@ -379,6 +421,7 @@ async function tick() {
     state.round_id, state.image.id, state.layers, data.count,
     data.paths.length && data.paths[data.paths.length - 1],
     model.run && [model.run.run_id, model.run.source, model.run.prompt_kind],
+    gaze.contributors, state.capture_mode,
     state.layers.analysis && stats.ok && stats.model_vs_human,
     state.layers.prompt && model.config && model.config.prompt_text,
     state.layers.gaze && gaze.contributors,
@@ -400,9 +443,9 @@ async function tick() {
     $('photo').src = '/img/' + encodeURIComponent(state.image.filename);
   }
 
-  $('title').innerHTML = `${state.image.label}<span class="sub">${state.tap_count} taps each</span>`;
-  $('count').textContent = data.count;
-  $('count-label').textContent = data.count === 1 ? 'response' : 'responses';
+  $('title').innerHTML = `${state.image.label}`;
+  renderTallies(state, data, gaze);
+  renderExplain(state, data, gaze, model.run);
 
   renderJson(state.layers.json);
 

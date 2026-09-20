@@ -163,16 +163,27 @@ let token = localStorage.getItem(TOKEN_KEY) ||
 let state = null;
 let PROBES = [];
 
-const LAYERS = [
-  { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
-  { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
-  { key: 'gaze',     name: 'Measured gaze', desc: 'Where the camera group actually looked' },
-  { key: 'gaze_paths', name: 'Gaze traces', desc: 'Each person\u2019s path over time, start ringed' },
-  { key: 'model',    name: 'Model scanpath', desc: 'DeepGaze3.5-VL prediction' },
-  { key: 'analysis', name: 'Agreement metrics', desc: 'Human vs model, with baselines' },
-  { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was actually asked, in full' },
-  { key: 'json',     name: 'Raw data (JSON)', desc: 'Full-screen overlay of the underlying data' },
+/* Grouped by source, so the symmetry is obvious: each human condition has a
+   heatmap and a scanpath, and they can be shown side by side or alone. */
+const LAYER_GROUPS = [
+  { title: 'Tapped — predicted', layers: [
+    { key: 'heatmap', name: 'Heatmap', desc: 'Where the tap group said they would look' },
+    { key: 'paths',   name: 'Scanpaths', desc: 'Each person\u2019s tap order' },
+  ]},
+  { title: 'Measured — eye tracked', layers: [
+    { key: 'gaze',       name: 'Heatmap', desc: 'Where the camera group actually looked' },
+    { key: 'gaze_paths', name: 'Scanpaths', desc: 'Each person\u2019s path over time, start ringed' },
+  ]},
+  { title: 'Model', layers: [
+    { key: 'model', name: 'Scanpath', desc: 'DeepGaze3.5-VL prediction' },
+  ]},
+  { title: 'Overlays', layers: [
+    { key: 'analysis', name: 'Agreement metrics', desc: 'Comparison with baselines' },
+    { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was asked, in full' },
+    { key: 'json',     name: 'Raw data (JSON)', desc: 'Full-screen overlay of the data' },
+  ]},
 ];
+const LAYERS = LAYER_GROUPS.flatMap((g) => g.layers);
 
 function notice(msg, kind = '') {
   const el = $('notice');
@@ -192,14 +203,17 @@ async function api(path, opts = {}) {
 }
 
 function renderToggles() {
-  $('toggles').innerHTML = LAYERS.map((l) => {
-    const on = state.layers[l.key];
-    return `<div class="toggle ${on ? 'on' : ''}" data-key="${l.key}"
-                 aria-disabled="${!!l.disabled}" role="switch" aria-checked="${on}">
-        <div><div class="name">${l.name}</div><div class="desc">${l.desc}</div></div>
-        <div class="sw"></div>
-      </div>`;
-  }).join('');
+  $('toggles').innerHTML = LAYER_GROUPS.map((g) => `
+    <div style="font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;
+                color:var(--muted);margin:10px 0 2px">${g.title}</div>` +
+    g.layers.map((l) => {
+      const on = state.layers[l.key];
+      return `<div class="toggle ${on ? 'on' : ''}" data-key="${l.key}"
+                   aria-disabled="${!!l.disabled}" role="switch" aria-checked="${on}">
+          <div><div class="name">${l.name}</div><div class="desc">${l.desc}</div></div>
+          <div class="sw"></div>
+        </div>`;
+    }).join('')).join('');
 
   $('toggles').querySelectorAll('.toggle').forEach((el) => {
     if (el.getAttribute('aria-disabled') === 'true') return;

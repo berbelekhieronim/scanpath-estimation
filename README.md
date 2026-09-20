@@ -26,9 +26,12 @@ phased build order.
 
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) — how to actually run a session.
 
-[`docs/SPEC-WEBCAM.md`](docs/SPEC-WEBCAM.md) — draft spec for a second capture
+[`docs/SPEC-WEBCAM.md`](docs/SPEC-WEBCAM.md) — spec for the second capture
 mode that *measures* gaze with the phone's front camera rather than asking
-people to predict it. Not yet approved.
+people to predict it.
+
+[`docs/SPEC-METRICS.md`](docs/SPEC-METRICS.md) — how tapped, measured and model
+viewing get compared, statistically and visually. Draft.
 
 ## Architecture in one line
 

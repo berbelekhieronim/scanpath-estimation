@@ -168,3 +168,28 @@ body.has-experimental .display { padding-bottom: 40px; }
 
 #gazepaths { pointer-events: none; }
 #gazepaths .gnum { font: 700 11px -apple-system, system-ui, sans-serif; fill: #1a0a2e; }
+
+
+/* Both groups' counts, always visible, so the room can watch itself fill. */
+.tallies { display: flex; gap: 22px; align-items: baseline; flex-wrap: wrap; }
+.tally-item { display: flex; align-items: baseline; gap: 8px; }
+.tally-item .n {
+  font-size: clamp(1.6rem, 3.2vw, 2.75rem); font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.tally-item.tap .n { color: var(--accent); }
+.tally-item.gaze .n { color: #b06bff; }
+.tally-item .lbl { color: var(--muted); font-size: 0.9375rem; }
+
+/* What the audience is actually looking at. */
+.explain {
+  flex: 0 0 auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 18px; font-size: clamp(.875rem, 1.5vw, 1.0625rem);
+  line-height: 1.5;
+}
+.explain .kn { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
+.explain .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.explain .dot.tap { background: #e8452e; }
+.explain .dot.gaze { background: #b06bff; }
+.explain .dot.model { background: #ff7a45; }
+.explain .none { color: var(--muted); }
