@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Gaze tracking test</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  .gt { height: 100vh; height: 100dvh; display: flex; flex-direction: column;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); gap: 9px; }
+
+  .gt-head { flex: 0 0 auto; }
+  .gt-head h1 { margin: 0 0 2px; font-size: 1.0625rem; }
+  .gt-head .sub { color: var(--muted); font-size: 0.8125rem; }
+
+  .arena {
+    flex: 1 1 auto; min-height: 0; position: relative;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); overflow: hidden;
+  }
+  /* Corner targets give a concrete thing to look at, which is the only way
+     to judge "does the dot follow my eye" without a calibration routine. */
+  .target {
+    position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px;
+    border-radius: 50%; border: 2px solid var(--border);
+    display: grid; place-items: center; color: var(--muted); font-size: 0.75rem;
+  }
+  .target::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--border); }
+
+  #dot {
+    position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+    border-radius: 50%; background: rgba(91,140,255,.85);
+    border: 2px solid #fff; box-shadow: 0 2px 10px rgba(0,0,0,.5);
+    transition: left .06s linear, top .06s linear; pointer-events: none;
+    display: none;
+  }
+  #dot.blink { background: rgba(245,165,36,.85); }
+  #trail { position: absolute; inset: 0; pointer-events: none; }
+
+  .arena-msg {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    text-align: center; padding: 22px; color: var(--muted); font-size: 0.9375rem;
+  }
+  .arena-msg strong { color: var(--text); display: block; margin-bottom: 6px; font-size: 1.0625rem; }
+
+  .stats { flex: 0 0 auto; display: grid; gap: 7px;
+           grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }
+  .stat { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 8px; padding: 7px 10px; }
+  .stat .l { color: var(--muted); font-size: 0.6875rem; text-transform: uppercase;
+             letter-spacing: .05em; }
+  .stat .v { font-size: 1.0625rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat.good .v { color: var(--ok); }
+  .stat.bad .v { color: var(--danger); }
+
+  .controls { flex: 0 0 auto; display: flex; gap: 8px; }
+  .controls button { flex: 1; padding: 12px; }
+
+  #preview {
+    position: absolute; right: 8px; bottom: 8px; width: 108px;
+    border-radius: 7px; border: 1px solid var(--border);
+    transform: scaleX(-1); background: #000; display: none;
+  }
+  #preview.on { display: block; }
+
+  .privacy { flex: 0 0 auto; color: var(--muted); font-size: 0.75rem; text-align: center; }
+  .rec { color: var(--danger); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="gt">
+
+  <div class="gt-head">
+    <h1>Gaze tracking test <span id="rec" class="rec" style="display:none">● CAMERA ON</span></h1>
+    <div class="sub" id="sub">Phase W1 — does a dot follow your eye on this device?</div>
+  </div>
+
+  <div class="arena" id="arena">
+    <div id="trail"></div>
+    <div id="dot"></div>
+    <video id="preview" autoplay playsinline muted></video>
+    <div class="arena-msg" id="msg">
+      <div>
+        <strong>Not started</strong>
+        Press <em>Start camera</em>. Nothing is captured until you do.
+      </div>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="controls">
+    <button id="start" class="primary">Start camera</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="mock">Mock</button>
+    <button id="prev">Preview</button>
+    <button id="check">Check</button>
+  </div>
+
+  <div class="privacy">
+    Video is processed on this device and never uploaded. Nothing is stored:
+    this page saves nothing at all.
+  </div>
+</div>
+
+<script type="module">
+import { createTracker, preflight, STATUS } from '/static/gaze/tracker.js';
+
+const $ = (id) => document.getElementById(id);
+let tracker = null;
+let frames = 0, faces = 0, blinks = 0, lastFpsAt = performance.now(), fps = 0;
+let recent = [];
+
+// Corner and centre targets to look at.
+[['TL', 12, 12], ['TR', 88, 12], ['C', 50, 50], ['BL', 12, 88], ['BR', 88, 88]]
+  .forEach(([label, x, y]) => {
+    const d = document.createElement('div');
+    d.className = 'target';
+    d.style.left = x + '%';
+    d.style.top = y + '%';
+    d.title = label;
+    $('arena').appendChild(d);
+  });
+
+function setMsg(title, body) {
+  $('msg').style.display = title ? 'grid' : 'none';
+  if (title) $('msg').innerHTML = `<div><strong>${title}</strong>${body || ''}</div>`;
+}
+
+function stat(label, value, cls = '') {
+  return `<div class="stat ${cls}"><div class="l">${label}</div><div class="v">${value}</div></div>`;
+}
+
+function renderStats() {
+  const faceRate = frames ? Math.round((faces / frames) * 100) : 0;
+  $('stats').innerHTML = [
+    stat('FPS', fps.toFixed(0), fps >= 8 ? 'good' : (fps > 0 ? 'bad' : '')),
+    stat('Face found', frames ? faceRate + '%' : '—',
+         frames ? (faceRate >= 80 ? 'good' : 'bad') : ''),
+    stat('Frames', frames),
+    stat('Blinks', blinks),
+    stat('Tracker', tracker ? tracker.name : '—'),
+  ].join('');
+}
+
+function drawTrail() {
+  const svg = $('trail');
+  const r = $('arena').getBoundingClientRect();
+  const pts = recent.filter((p) => p.x != null);
+  svg.innerHTML = pts.length < 2 ? '' :
+    `<svg width="100%" height="100%" viewBox="0 0 ${r.width} ${r.height}">
+       <polyline fill="none" stroke="rgba(91,140,255,.35)" stroke-width="2"
+         points="${pts.map((p) => `${p.x * r.width},${p.y * r.height}`).join(' ')}"/>
+     </svg>`;
+}
+
+function onSample(s) {
+  frames++;
+  if (s.ok) faces++;
+  if (s.state === 'closed') blinks++;
+
+  const now = performance.now();
+  if (now - lastFpsAt > 500) {
+    fps = (frames - (onSample._lastFrames || 0)) / ((now - lastFpsAt) / 1000);
+    onSample._lastFrames = frames;
+    lastFpsAt = now;
+  }
+
+  if (s.ok && s.x != null) {
+    setMsg(null);
+    const dot = $('dot');
+    dot.style.display = 'block';
+    dot.style.left = (s.x * 100) + '%';
+    dot.style.top = (s.y * 100) + '%';
+    dot.classList.toggle('blink', s.state === 'closed');
+    recent.push(s);
+    if (recent.length > 40) recent.shift();
+    drawTrail();
+  } else if (frames > 20 && faces === 0) {
+    setMsg('No face detected',
+      'Hold the phone at reading distance, face the camera, and make sure the ' +
+      'room is lit. A dark room is the most common reason this fails.');
+  }
+  renderStats();
+}
+
+function onStatus(status, error) {
+  $('rec').style.display = status === STATUS.RUNNING ? '' : 'none';
+  const map = {
+    [STATUS.LOADING]: ['Loading the tracker…', 'About 3 MB on first run.'],
+    [STATUS.PERMISSION]: ['Waiting for camera permission', 'Allow it in the browser prompt.'],
+    [STATUS.RUNNING]: [null, null],
+    [STATUS.STOPPED]: ['Stopped', 'The camera has been released.'],
+    [STATUS.ERROR]: ['Could not start', error || ''],
+  };
+  const [title, body] = map[status] || [];
+  if (title !== null) setMsg(title, body);
+  $('sub').textContent = `status: ${status}` + (error ? ` — ${error}` : '');
+  $('start').disabled = status === STATUS.RUNNING || status === STATUS.LOADING;
+  $('stop').disabled = status !== STATUS.RUNNING;
+  renderStats();
+}
+
+async function begin(kind) {
+  if (tracker) tracker.stop();
+  frames = faces = blinks = 0; recent = []; fps = 0;
+  $('dot').style.display = 'none';
+  tracker = createTracker(kind, $('preview'));
+  tracker.onSample = onSample;
+  tracker.onStatus = onStatus;
+  try { await tracker.start(); } catch { /* onStatus already reported it */ }
+}
+
+async function runPreflight() {
+  setMsg('Checking dependencies…', '');
+  const results = await preflight();
+  const rows = results.map((r) =>
+    `<div style="display:flex;gap:9px;align-items:baseline;justify-content:space-between;
+                 padding:5px 0;border-bottom:1px solid var(--border)">
+       <span style="text-align:left">${r.name}</span>
+       <strong style="color:var(--${r.ok ? 'ok' : 'danger'})">${r.ok ? 'reachable' : 'BLOCKED'}</strong>
+     </div>`).join('');
+  const bad = results.filter((r) => !r.ok);
+  setMsg(bad.length ? `${bad.length} dependency problem(s)` : 'All dependencies reachable',
+    `<div style="max-width:420px;margin:12px auto 0;font-size:.8125rem">${rows}</div>` +
+    (bad.length ? `<div style="margin-top:12px;color:var(--warn);font-size:.8125rem">
+       Tracking cannot start until these are reachable. If this is the venue wifi,
+       that is the thing to fix before the session.</div>` : ''));
+}
+
+$('check').addEventListener('click', runPreflight);
+$('start').addEventListener('click', () => begin('webeyetrack'));
+$('mock').addEventListener('click', () => begin('mock'));
+$('stop').addEventListener('click', () => tracker && tracker.stop());
+$('prev').addEventListener('click', () => $('preview').classList.toggle('on'));
+
+// Never leave a camera running because someone navigated away.
+window.addEventListener('pagehide', () => tracker && tracker.stop());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && tracker) tracker.stop();
+});
+
+renderStats();
+</script>
+</body>
+</html>

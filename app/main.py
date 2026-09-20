@@ -155,6 +155,12 @@ def page_start():
     return _page("start.html")
 
 
+@app.get("/gazetest", include_in_schema=False)
+def page_gazetest():
+    """Phase W1 diagnostic: does webcam gaze tracking work on this device?"""
+    return _page("gazetest.html")
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
@@ -641,3 +647,6 @@ def api_token_check(_: str = Depends(require_token)):
 config.ensure_dirs()
 app.mount("/img", StaticFiles(directory=config.IMAGES_DIR), name="images")
 app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
+# The WebEyeTrack bundle hard-codes the path "/web/model.json", so the
+# BlazeGaze weights have to be served from the site root, not under /static.
+app.mount("/web", StaticFiles(directory=config.STATIC_DIR / "web"), name="gazemodel")

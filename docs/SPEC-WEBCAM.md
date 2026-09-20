@@ -319,7 +319,7 @@ tap route, so Stage 1 stays as light as it is now.
 
 | Phase | Deliverable | Gate |
 |---|---|---|
-| **W1** | Tracker adapter interface + WebEyeTrack behind it; a bare test page showing a live gaze dot | **A dot follows your eye on a phone.** Everything else is moot until this works in the room |
+| **W1** | Tracker adapter interface + WebEyeTrack behind it; a bare test page showing a live gaze dot | **A dot follows your eye on a phone.** Everything else is moot until this works in the room — **built, gate not yet met, see §12** |
 | **W2** | Consent screen, 9-point calibration, validation scoring, quality gate | A participant can calibrate and be told whether it worked |
 | **W3** | Stage 3 viewing, sampling, batch upload, session storage | Gaze data lands in the database with a quality score |
 | **W4** | Coarse-grid analysis, measured-gaze display layer, exclusion reporting | The room's measured heatmap appears on the projector |
@@ -340,3 +340,76 @@ It is a day of work and it is the honest gate.
 4. **Show individuals their own result?** Powerful, but needs a per-participant results route and raises the "my data on screen" question. Recommend: yes, on their own phone only, never projected.
 5. **Grid resolution: 3 × 3 or 3 × 2?** Start at 3 × 3 and check against real calibration error before trusting it.
 6. **Is any of this going to become research output?** If yes, ethics approval must precede the first session that collects data (§7).
+
+---
+
+## 12. W1 as built
+
+Implemented at `/gazetest`, with the adapter in `app/static/gaze/tracker.js`.
+
+### 12.1 Two packaging problems, both fixed
+
+**The published npm package cannot run as documented.** `dist/index.js`
+references `index.worker.js`, which upstream's webpack build emits and the
+published tarball omits. `WebEyeTrackProxy` — the worker-based class the
+upstream README tells you to use — therefore cannot start. The fix is to use
+the `WebEyeTrack` class, which runs on the main thread and needs no worker. At
+the ~2.4 ms per frame the paper reports, that is affordable; it does mean
+inference shares the UI thread, which is worth revisiting if upstream ships
+the worker.
+
+**The UMD bundle does not namespace its exports.** It copies each class
+straight onto the global object, so they arrive as `window.WebEyeTrack` and
+`window.WebcamClient`, not under a `window.webeyetrack` namespace. Found by
+loading the bundle in a headless browser and diffing `Object.keys(window)`.
+
+Both are pinned by tests, so an upstream change surfaces as a failure rather
+than a mystery on the day.
+
+### 12.2 Vendored, and what still is not
+
+`webeyetrack@0.0.2`'s UMD bundle (2.7 MB) and the BlazeGaze weights (669 KB)
+are committed. The weights must be served at exactly `/web/model.json` because
+the bundle hard-codes that path; a test asserts both the mount and the
+hard-coding.
+
+**Two dependencies are still fetched from the internet at runtime:**
+`cdn.jsdelivr.net` for the MediaPipe WASM runtime, and
+`storage.googleapis.com` for the face landmark model. If the venue blocks
+either, tracking will not start. `/gazetest` has a **Check** button that tests
+every dependency and names which are unreachable — run it on the venue wifi.
+Vendoring these two is the obvious follow-up.
+
+### 12.3 The mock backend
+
+`MockBackend` produces pointer-driven samples with noise at roughly the real
+tracker's error. It is not a placeholder for its own sake: it lets W2–W5 —
+calibration, sampling, storage, analysis — be built and tested without waiting
+on camera hardware, and gives automated tests a deterministic source. Anything
+built against it meets realistically noisy data rather than a clean signal.
+
+### 12.4 What is verified, and what is not
+
+Verified in a headless browser: page and asset serving, library loading,
+the mock pipeline end to end (dot, trail, FPS and face-rate counters, start
+and stop), camera release on stop, on tab-hide and on failure, and the error
+messages for a blocked dependency.
+
+**Not verified: that it tracks a real eye.** This environment has no camera and
+no face, and its network blocks the MediaPipe CDN, so the tracker has never
+completed initialisation here. Everything up to that point works; the gaze
+estimate itself is unproven.
+
+**The W1 gate is therefore still open.** It needs one session with a real phone
+on the venue network:
+
+1. Open `/gazetest` on a phone over the Codespace HTTPS URL.
+2. Press **Check** — all four dependencies must read reachable.
+3. Press **Start camera**, allow the prompt.
+4. Look at each of the five targets in turn.
+
+Judge it on: does the dot move in the right direction; does *face found* stay
+above ~80%; does FPS hold above ~8. Absolute position will be off before
+calibration (W2) — W1 is about whether the signal exists at all, not where it
+lands. Try it with the room lights down as well as up, since that is the
+condition that most likely defeats it.
