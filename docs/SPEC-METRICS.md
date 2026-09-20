@@ -291,3 +291,100 @@ it. On a light page near-zero is the light end of the blue ramp, so darker
 means more; on a dark page near-zero is the dark end, so lighter means more.
 The word in the caption is derived from the mode (`MORE_IS`), because a
 hard-coded "darker means more" is wrong half the time — it was, briefly.
+
+
+---
+
+## 9. What the display shows, and what it says it shows (2026-09-20)
+
+Four changes, all from the same complaint: the overlays were impossible to
+tell apart, and it was not clear what "agreement" was agreement *between*.
+
+**1. The two density layers were literally the same picture twice.** Both the
+tapped heatmap and the measured-gaze heatmap called one `drawHeatmap` with one
+rainbow ramp. The caption called one of them a "purple cloud" — it was never
+drawn in purple — and called the tap traces' key red while the traces were
+drawn white. Now each source owns one hue (the validated categorical slots,
+which also replaces the trio that failed colour-vision validation), and the
+caption names the colour that is actually on screen. The legend swatches show
+each source's own ramp rather than one shared rainbow.
+
+**2. Hue alone was not enough.** Two filled clouds still hide each other —
+whichever is painted second wins — and blending them washed both out against a
+bright sky. The measured layer is therefore drawn as **nested contour rings**
+with nothing inside them: a different *form*, not just a different colour, so
+the tapped cloud shows through and the two read as different kinds of thing at
+a glance. Outer rings are fainter than inner ones so the nesting still reads
+as a gradient.
+
+**3. "Agreement" now says whose.** `/api/analysis` reads markers, and markers
+only ever come from tapping, so it has always been the **tap group against the
+model** with measured gaze absent. Harmless when tapping was the only
+condition; a trap once two human layers share the screen. The endpoint now
+declares its scope in a `compares` field and the panel prints it, including
+that measured gaze is not in those numbers. For all three sources the endpoint
+is `/api/compare/maps` and the view is the charts layer.
+
+**4. The projected charts lost their headline sentence.** It read the result
+out for the audience ("has almost nothing in common with…"), which is an
+interpretation that changes with every session's data and belongs to the
+presenter, not to the app. The difference map gained a faint plate of the
+scene underneath so the cells are anchored to something the audience
+remembers, and every grid now takes the picture's proportions — a square grid
+over a 4:3 photograph does not line up with what it describes. The three
+density panels take the proportions but not the plate: they are read by
+comparing fills across one shared scale, and three photographs behind them
+would fight exactly that comparison.
+
+Also recorded, because the demo rests on it: the two human groups are
+**different people**, and the caption now says so whenever both are on
+screen. Two clouds on one picture otherwise read as before-and-after for the
+same person, which is the one thing they are not.
+
+
+---
+
+## 9. What the display shows, and what it says it shows (2026-09-20)
+
+Four changes, all from one complaint: the overlays were impossible to tell
+apart, and it was not clear what "agreement" was agreement *between*.
+
+**1. The two density layers were literally the same picture twice.** Both the
+tapped heatmap and the measured-gaze heatmap called one `drawHeatmap` with one
+rainbow ramp. The caption called one of them a "purple cloud" — it was never
+drawn in purple — and gave the tap traces a red key while drawing them white.
+Now each source owns one hue (the validated categorical slots, which also
+retires the trio that failed colour-vision validation), and the caption names
+the colour actually on screen. The legend swatches show each source's own ramp
+rather than one shared rainbow.
+
+**2. Hue alone was not enough.** Two filled clouds still hide each other —
+whichever is painted second wins — and blending them washed both out against a
+bright sky. The measured layer is drawn as **nested contour rings** with
+nothing inside them: a different *form*, not just a different colour, so the
+tapped cloud shows through and the two read as different kinds of thing at a
+glance. Outer rings are fainter than inner ones so the nesting still reads as
+a gradient.
+
+**3. "Agreement" now says whose.** `/api/analysis` reads markers, and markers
+only ever come from tapping, so it has always been the **tap group against the
+model**, with measured gaze absent. Harmless while tapping was the only
+condition; a trap once two human layers share the screen. The endpoint declares
+its scope in a `compares` field and the panel prints it, including that
+measured gaze is not in those numbers. For all three sources the endpoint is
+`/api/compare/maps` and the view is the charts layer.
+
+**4. The projected charts lost their headline sentence.** It read the result
+out for the audience ("has almost nothing in common with…"), an interpretation
+that changes with every session's data and belongs to the presenter rather than
+to the app. The difference map gained a faint plate of the scene underneath so
+its cells stay anchored to something the audience remembers, and every grid now
+takes the picture's proportions — a square grid over a 4:3 photograph does not
+line up with what it describes. The density panels take the proportions but not
+the plate: they are read by comparing fills on one shared scale, and three
+photographs behind them would fight exactly that comparison.
+
+Also recorded, because the demo rests on it: the two human groups are
+**different people**, and the caption says so whenever both are on screen. Two
+clouds on one picture otherwise read as before-and-after for one person, which
+is the one thing they are not.

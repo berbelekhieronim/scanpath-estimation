@@ -448,7 +448,14 @@ def api_model_runs():
 
 @app.get("/api/analysis")
 def api_analysis():
-    """Agreement between the room's taps and the model's prediction.
+    """Agreement between the **tap group's** responses and the model.
+
+    Measured gaze is not in this comparison and never has been — it reads
+    markers, and markers only ever come from tapping. That was harmless while
+    tapping was the only condition; with two groups on screen, a panel headed
+    "agreement" that silently means one of them is a trap. So the scope is
+    declared in the payload and printed on the panel. For all three sources,
+    /api/compare/maps is the endpoint, and the charts layer is the view.
 
     Computed on demand rather than cached: it takes milliseconds at this
     scale, and a stale panel during a live reveal would be worse than a
@@ -473,6 +480,13 @@ def api_analysis():
                               [p for p in model_paths if p])
     if run:
         result["model_source"] = run.get("source")
+    result["compares"] = {
+        "a": "tapped",
+        "b": "model",
+        "n_a": len(by_participant),
+        "n_b": len([p for p in model_paths if p]),
+        "excludes": "measured",
+    }
     return result
 
 

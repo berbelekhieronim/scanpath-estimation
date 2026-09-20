@@ -39,8 +39,7 @@
 <script type="module">
 import { drawHeatmap } from '/static/heatmap.js';
 import {
-  densityPanels, sequentialScale, differenceMap, legendRow, headlineText,
-  MORE_IS,
+  densityPanels, sequentialScale, differenceMap, legendRow, MORE_IS, OVERLAY,
 } from '/static/charts.js';
 
 const $ = (id) => document.getElementById(id);
@@ -61,14 +60,18 @@ function renderPaths(paths, show) {
   // One faint line per participant. Individually they are noise; together
   // the shared structure is the point, so they are drawn low-contrast and
   // let the heatmap carry the density.
+  // Tapped blue, the same identity the tapped heatmap and the charts use.
+  // These were white, while the legend showed a red dot beside them.
   svg.innerHTML = paths.map((pts) => {
     const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
     const dots = pts.map(([x, y], i) =>
-      `<circle cx="${x * V}" cy="${y * V}" r="${i === 0 ? 7 : 5}"
-        fill="${i === 0 ? '#fff' : 'rgba(255,255,255,.55)'}"
+      `<circle cx="${x * V}" cy="${y * V}" r="${i === 0 ? 7 : 4.5}"
+        fill="${i === 0 ? OVERLAY.tappedInk : OVERLAY.tapped}"
+        stroke="${i === 0 ? OVERLAY.tapped : 'none'}" stroke-width="2"
         vector-effect="non-scaling-stroke"/>`).join('');
-    return `<polyline points="${d}" fill="none" stroke="rgba(255,255,255,.42)"
-              stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
+    return `<polyline points="${d}" fill="none" stroke="${OVERLAY.tapped}"
+              stroke-opacity=".55" stroke-width="2" stroke-linejoin="round"
+              stroke-linecap="round"
               vector-effect="non-scaling-stroke"/>${dots}`;
   }).join('');
 }
@@ -81,7 +84,11 @@ function renderGaze(data, show) {
   if (!show || !data || !data.points.length) return;
   // Measured gaze is coarse — roughly a fifth of the screen in error — so it
   // is drawn as a density cloud rather than points pretending to precision.
-  drawHeatmap(c, data.points, 0.12);
+  // In its own hue: drawn with the tapped ramp, the two clouds were the same
+  // picture twice and no audience could separate them.
+  // Rings, not a cloud: it shares the picture with the tapped map, and two
+  // filled clouds cannot both be seen.
+  drawHeatmap(c, data.points, 0.12, 'orange', 'contour');
 }
 
 /* Both groups, always. The presenter needs to see the split filling up, and
@@ -102,25 +109,46 @@ function renderTallies(state, taps, gaze) {
 }
 
 /* A caption, in words, for whatever is currently switched on.
-   Without it a projected heatmap is just a coloured blob. */
+   Without it a projected heatmap is just a coloured blob.
+
+   Every line here names the colour actually on screen. It used to name
+   colours that were not: the measured cloud was called purple while being
+   drawn with the tapped ramp, and the tap traces were white behind a red
+   key. Two sources that look alike are worse than one, so the wording and
+   the marks are kept in step deliberately. */
 function renderExplain(state, taps, gaze, run) {
   const L = state.layers;
   const on = [];
-  if (L.heatmap && taps.count) on.push(
-    `<span class="kn"><span class="dot tap"></span><strong>Warm areas</strong>:
-     where ${taps.count} people <em>predicted</em> they would look</span>`);
-  if (L.paths && taps.count) on.push(
-    `<span class="kn"><span class="dot tap"></span><strong>Thin lines</strong>:
-     the order each person tapped</span>`);
-  if (L.gaze && gaze.contributors) on.push(
-    `<span class="kn"><span class="dot gaze"></span><strong>Purple cloud</strong>:
-     where ${gaze.contributors} people <em>actually looked</em>, measured by camera</span>`);
-  if (L.gaze_paths && gaze.contributors) on.push(
-    `<span class="kn"><span class="dot gaze"></span><strong>Purple traces</strong>:
-     each person's eye path, starting at the white ring</span>`);
-  if (L.model && run) on.push(
-    `<span class="kn"><span class="dot model"></span><strong>Orange numbered path</strong>:
-     what the model predicts a human would do</span>`);
+  // Each entry is one dot plus ONE text node. Split across several nodes the
+  // flex gap lands between them, which put a space before every colon and
+  // comma in this caption.
+  const kn = (cls, html) => `<span class="kn"><span class="dot ${cls}"></span>`
+    + `<span class="txt">${html}</span></span>`;
+
+  if (L.heatmap && taps.count) on.push(kn('tap',
+    `<strong>Blue cloud</strong>: where ${taps.count} people
+     <em>predicted</em> they would look`));
+  if (L.paths && taps.count) on.push(kn('tap',
+    `<strong>Blue lines</strong>: the order each of those people tapped`));
+  if (L.gaze && gaze.contributors) on.push(kn('gaze',
+    `<strong>Orange rings</strong>: where ${gaze.contributors}
+     <em>different</em> people <em>actually looked</em>, measured by camera —
+     tighter rings mean more looking`));
+  if (L.gaze_paths && gaze.contributors) on.push(kn('gaze',
+    `<strong>Orange traces</strong>: each of their eye paths, starting at the
+     pale ring`));
+  if (L.model && run) on.push(kn('model',
+    `<strong>Green numbered path</strong>: what the model predicts a human
+     would do`));
+
+  // Nobody tapped *and* was eye-tracked, so the two clouds are two different
+  // groups of people. Left unsaid, an audience reads them as before-and-after
+  // for the same person, which is the one thing they are not.
+  if (L.heatmap && L.gaze && taps.count && gaze.contributors) on.push(
+    `<span class="between">Blue cloud and orange rings are
+     <strong>different people</strong> — nobody did both, because tapping
+     first would change where you then look. For where the two actually
+     differ, switch to Comparison charts.</span>`);
 
   $('explain').innerHTML = on.length
     ? on.join('')
@@ -138,11 +166,11 @@ function renderGazePaths(data, show) {
   svg.innerHTML = data.paths.map((pts) => {
     const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
     const start = pts[0];
-    return `<polyline points="${d}" fill="none" stroke="#d3a5ff"
-              stroke-opacity=".8" stroke-width="2.5" stroke-linejoin="round"
+    return `<polyline points="${d}" fill="none" stroke="${OVERLAY.measured}"
+              stroke-opacity=".85" stroke-width="2.5" stroke-linejoin="round"
               stroke-linecap="round" vector-effect="non-scaling-stroke"/>` +
       (start ? `<circle cx="${start[0] * V}" cy="${start[1] * V}" r="7"
-              fill="#fff" stroke="#b06bff" stroke-width="2"
+              fill="${OVERLAY.measuredInk}" stroke="${OVERLAY.measured}" stroke-width="2"
               vector-effect="non-scaling-stroke"/>` : '');
   }).join('');
 }
@@ -156,7 +184,7 @@ function renderModel(run, show) {
   // rather than one cherry-picked path.
   const ghosts = (run.samples_norm || []).slice(1).map((pts) => {
     const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
-    return `<polyline points="${d}" fill="none" stroke="#ff7a45"
+    return `<polyline points="${d}" fill="none" stroke="${OVERLAY.model}"
               stroke-opacity=".22" stroke-width="2" stroke-linejoin="round"
               vector-effect="non-scaling-stroke"/>`;
   }).join('');
@@ -165,13 +193,13 @@ function renderModel(run, show) {
   const primary = run.scanpath_norm || [];
   const line = primary.map(([x, y]) => `${x * V},${y * V}`).join(' ');
   const dots = primary.map(([x, y], i) => `
-      <circle cx="${x * V}" cy="${y * V}" r="15" fill="#ff7a45"
+      <circle cx="${x * V}" cy="${y * V}" r="15" fill="${OVERLAY.model}"
               stroke="#fff" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
       <text class="fix-num" x="${x * V}" y="${y * V}" text-anchor="middle"
             dominant-baseline="central">${i + 1}</text>`).join('');
 
   svg.innerHTML = ghosts + `<polyline points="${line}" fill="none"
-      stroke="#ff7a45" stroke-width="3.5" stroke-linejoin="round"
+      stroke="${OVERLAY.model}" stroke-width="3.5" stroke-linejoin="round"
       stroke-linecap="round" vector-effect="non-scaling-stroke"/>` + dots;
 }
 
@@ -285,6 +313,16 @@ async function renderJson(show) {
    table, no dot plot, no tooltips. Nobody reads a nine-row table or hovers a
    mark from the back of a room, and putting them up there would only make the
    two images that do work smaller. */
+/* The difference map is the one image the audience has to hold in their head
+   after the picture goes away, so it is drawn over a faint plate of the scene
+   itself. The three density panels are not: they are read by comparing fills
+   across three grids on one scale, and three photographs behind them would
+   fight exactly that comparison. They take the scene's proportions only. */
+const sceneUrl = (d) => d.image
+  ? '/img/' + encodeURIComponent(d.image.filename) : null;
+const sceneAspect = (d) => (d.image && d.image.width && d.image.height)
+  ? d.image.width / d.image.height : 1;
+
 async function renderCharts(show) {
   let el = document.getElementById('charts-overlay');
   if (!show) { if (el) el.remove(); return; }
@@ -315,11 +353,6 @@ async function renderCharts(show) {
     return;
   }
 
-  const head = document.createElement('div');
-  head.className = 'headline';
-  head.textContent = headlineText(d);
-  el.appendChild(head);
-
   const body = document.createElement('div');
   body.className = 'cbody';
 
@@ -331,11 +364,12 @@ async function renderCharts(show) {
     + 'person, on one shared colour scale \u2014 ' + MORE_IS
     + ' means more looked at.';
   main.appendChild(mcap);
-  main.appendChild(densityPanels(d, {hover: false}));
+  main.appendChild(densityPanels(d, {hover: false, aspect: sceneAspect(d)}));
   main.appendChild(sequentialScale());
   body.appendChild(main);
 
-  const diff = differenceMap(d, {hover: false, key: false});
+  const diff = differenceMap(d, {hover: false, key: false,
+    image: sceneUrl(d), aspect: sceneAspect(d)});
   if (diff) {
     const side = document.createElement('div');
     side.className = 'cside';
@@ -385,6 +419,19 @@ function renderAnalysis(a, show) {
     return;
   }
 
+  /* Say which two things this compares, before saying how well they agree.
+     These numbers are the TAP group against the model; the measured group is
+     not in them. Unlabelled, "agreement" beside a screen showing two human
+     layers reads as whichever one the viewer had in mind. */
+  const cmp = a.compares || {a: 'tapped', b: 'model', excludes: 'measured'};
+  const scope = `<div class="scope">
+    <span class="kn"><span class="dot tap"></span>Tapped</span>
+    <span class="vs">vs</span>
+    <span class="kn"><span class="dot model"></span>Model</span>
+    <span class="excl">measured gaze is <strong>not</strong> in these numbers —
+      turn on Comparison charts for all three</span>
+  </div>`;
+
   const mv = a.model_vs_human, ce = a.human_ceiling, bl = a.baselines;
   const ceilingOk = ce && !ce.unavailable && ce.spearman;
 
@@ -395,14 +442,15 @@ function renderAnalysis(a, show) {
   if (mv.spearman !== null && mv.spearman <= 0) {
     // A ratio against the ceiling would render as a negative percentage,
     // which reads as a bug rather than as the finding it is.
-    headline = `The model and the room <strong>do not agree</strong> on this
-      image — no better than chance.`;
+    headline = `The model and the tap group <strong>do not agree</strong> on
+      this image — no better than chance.`;
   } else if (ceilingOk && mv.spearman !== null && ce.spearman > 0) {
     const pct = Math.round((mv.spearman / ce.spearman) * 100);
-    headline = `The model matches the room <strong>${pct}%</strong> as well as
-      the room matches itself.`;
+    headline = `The model matches the tap group <strong>${pct}%</strong> as
+      well as that group matches itself.`;
   } else if (mv.spearman !== null) {
-    headline = `Model–human agreement: <strong>${fmt(mv.spearman)}</strong>`;
+    headline = `Model vs tapped agreement:
+      <strong>${fmt(mv.spearman)}</strong>`;
   } else {
     headline = 'Not enough spread in the responses to correlate yet.';
   }
@@ -411,7 +459,7 @@ function renderAnalysis(a, show) {
     ? `Both put the same area first.`
     : `They disagree on which area comes first.`;
 
-  el.innerHTML = `
+  el.innerHTML = scope + `
     <div class="headline">${headline} ${topline}</div>
     <div class="metrics">
       <div class="metric headline-metric">
@@ -421,7 +469,7 @@ function renderAnalysis(a, show) {
           centre bias ${fmt(bl.centre_bias.spearman)}</div>
       </div>
       <div class="metric ceiling">
-        <div class="label">Human-to-human ceiling</div>
+        <div class="label">Tap group vs itself (ceiling)</div>
         <div class="value">${ceilingOk ? fmt(ce.spearman) : '—'}</div>
         <div class="against">${ceilingOk
           ? `split-half, ${ce.n_per_half} per side`
@@ -459,14 +507,14 @@ function renderLegend(layers, n, run) {
   if (layers.heatmap && n) keys.push(
     `<span class="key"><span class="swatch heat"></span>where people said they'd look — fewer &rarr; more</span>`);
   if (layers.paths && n) keys.push(
-    `<span class="key"><span class="swatch path"></span>individual orders, first look ringed brighter</span>`);
+    `<span class="key"><span class="swatch path"></span>individual tap orders, first tap ringed pale</span>`);
   if (layers.gaze && n !== undefined) {
-    keys.push(`<span class="key"><span class="swatch gaze"></span>measured gaze
-      (camera)</span>`);
+    keys.push(`<span class="key"><span class="swatch gazeheat"></span>where a
+      different group actually looked &mdash; fewer &rarr; more</span>`);
   }
   if (layers.gaze_paths) {
     keys.push(`<span class="key"><span class="swatch gaze"></span>gaze traces,
-      start ringed white</span>`);
+      start ringed pale</span>`);
   }
   if (layers.model && run) {
     const extra = (run.samples_norm || []).length - 1;
@@ -532,6 +580,11 @@ async function tick() {
 
   const frame = $('frame');
   if (frame.hidden) frame.hidden = false;
+  // With both density layers on, the upper canvas painted over the lower one
+  // and the tapped cloud simply vanished. Blended, the two show through each
+  // other and their overlap reads as overlap.
+  frame.classList.toggle('both-heat',
+    !!(state.layers.heatmap && state.layers.gaze));
   if (imageAspect !== state.image.id) {
     imageAspect = state.image.id;
     frame.style.aspectRatio = `${state.image.width} / ${state.image.height}`;
@@ -548,7 +601,7 @@ async function tick() {
   const resized = sizeCanvas();
   if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick
   if (changed || resized) {
-    drawHeatmap($('heat'), state.layers.heatmap ? data.points : []);
+    drawHeatmap($('heat'), state.layers.heatmap ? data.points : [], 0.085, 'blue');
     renderGaze(gaze, state.layers.gaze);
     renderGazePaths(gaze, state.layers.gaze_paths);
     renderPaths(data.paths, state.layers.paths);

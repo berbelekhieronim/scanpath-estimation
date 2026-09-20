@@ -31,6 +31,15 @@ export const HEX = LIGHT
   ? {tapped: "#2a78d6", measured: "#d95926", model: "#199e70"}
   : {tapped: "#3987e5", measured: "#d95926", model: "#199e70"};
 
+/* The same three identities, for marks drawn on top of the photograph. Fixed
+   rather than mode-dependent: the surface there is the picture, not the page,
+   so flipping them with the browser's colour scheme would be answering the
+   wrong question. */
+export const OVERLAY = {
+  tapped: "#3987e5", measured: "#d95926", model: "#199e70",
+  tappedInk: "#cde2fb", measuredInk: "#ffd9c4",
+};
+
 /* Sequential: one hue, ordered from "near zero" to "most". Near zero is the
    step that recedes toward this mode's surface — the light end on a light
    page, the dark end on a dark one. A selected ramp per mode, not a flip. */
@@ -152,21 +161,41 @@ function svg(tag, attrs) {
 /* ---------- the grid mark ---------- */
 
 function gridSvg(cells, n, o) {
-  const S = 300, gap = 2, cw = (S - gap * (n - 1)) / n;
-  const root = svg("svg", {viewBox: `0 0 ${S} ${S}`, role: "img",
+  // The grid divides the picture, so it carries the picture's shape. Drawn
+  // square over a 4:3 photograph it would not line up with the thing it
+  // describes.
+  const W = 300, H = Math.round(300 / (o.aspect || 1));
+  const gap = 2;
+  const cw = (W - gap * (n - 1)) / n, ch = (H - gap * (n - 1)) / n;
+  const root = svg("svg", {viewBox: `0 0 ${W} ${H}`, role: "img",
                            "aria-label": o.aria});
+  if (o.image) {
+    // A faint plate of the scene underneath, so the audience remembers what
+    // the cells are cells *of*. Desaturated and dimmed so it never competes
+    // with the fills it sits behind.
+    root.appendChild(svg("image", {
+      href: o.image, x: 0, y: 0, width: W, height: H,
+      preserveAspectRatio: "none", opacity: 0.55,
+      style: "filter:saturate(.35)",
+    }));
+  }
   cells.forEach((v, i) => {
     const r = Math.floor(i / n), c = i % n;
-    const x = c * (cw + gap), y = r * (cw + gap);
+    const x = c * (cw + gap), y = r * (ch + gap);
     const fill = o.colour(v);
     // A 2px surface gap between fills, never a border, so two cells of a
     // similar shade still read as two cells.
-    const rect = svg("rect", {x, y, width: cw, height: cw, rx: 4, fill});
+    const rect = svg("rect", {x, y, width: cw, height: ch, rx: 4, fill,
+                              "fill-opacity": o.image ? 0.78 : 1});
     root.appendChild(rect);
     const t = svg("text", {
-      x: x + cw / 2, y: y + cw / 2 + cw * 0.055, "text-anchor": "middle",
-      "font-size": Math.round(cw * 0.155), "font-weight": 600,
+      x: x + cw / 2, y: y + ch / 2 + ch * 0.055, "text-anchor": "middle",
+      "font-size": Math.round(Math.min(cw, ch) * 0.155), "font-weight": 600,
       fill: inkFor(fill), "font-family": "inherit", "pointer-events": "none",
+      // Over a photograph the fill alone no longer decides legibility, so the
+      // number carries its own contrast.
+      ...(o.image ? {stroke: inkFor(fill) === "#12131a" ? "#fff" : "#000",
+                     "stroke-width": 3, "paint-order": "stroke"} : {}),
     });
     t.textContent = o.label(v);
     root.appendChild(t);
@@ -201,6 +230,7 @@ export function densityPanels(data, opts = {}) {
     if (m) {
       card.appendChild(gridSvg(m.cells, data.grid, {
         aria: `${s.label}: attention per grid cell`,
+        aspect: opts.aspect,
         colour: (v) => seqColour(v, max),
         label: (v) => Math.round(v * 100) + "%",
         hover,
@@ -245,6 +275,7 @@ export function differenceMap(data, opts = {}) {
   const map = el("div", "map");
   map.appendChild(gridSvg(d, data.grid, {
     aria: "Measured minus tapped, per grid cell",
+    image: opts.image, aspect: opts.aspect,
     colour: (v) => divColour(v, max),
     label: (v) => (v > 0 ? "+" : "") + Math.round(v * 100) + "%",
     hover,
@@ -485,28 +516,4 @@ export function legendRow(data) {
     host.appendChild(item);
   });
   return host;
-}
-
-/* ---------- the one sentence the room needs ---------- */
-
-/* On a projector nobody reads a table, so the headline says the single thing
-   the charts are evidence for — and says plainly when it is not yet evidence
-   for anything. */
-export function headlineText(data) {
-  const p = (data.pairs || {})["tapped|measured"];
-  const maps = data.maps || {};
-  const nt = maps.tapped ? maps.tapped.n : 0;
-  const nm = maps.measured ? maps.measured.n : 0;
-  if (!p || p.cc === null || nt < 2 || nm < 2) {
-    return "Not enough people in both groups yet to compare where they said "
-         + "they would look against where they looked.";
-  }
-  const r = p.cc;
-  const strength = r < 0.2 ? "almost nothing in common with"
-    : r < 0.45 ? "only a loose resemblance to"
-    : r < 0.7 ? "a moderate resemblance to" : "a close resemblance to";
-  const thin = (nt < 6 || nm < 6)
-    ? " On this few people it is an indication, not a result." : "";
-  return `Where ${nt} people said they would look has ${strength} where `
-       + `${nm} people actually looked (correlation ${r.toFixed(2)}).${thin}`;
 }

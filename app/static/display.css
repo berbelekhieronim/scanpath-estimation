@@ -43,10 +43,17 @@ html, body { height: 100%; overflow: hidden; background: #0b0c10; }
 }
 .legend .key { display: inline-flex; align-items: center; gap: 7px; }
 .legend .swatch { width: 26px; height: 9px; border-radius: 3px; }
+/* Each density swatch is its own source's ramp, so the key under the picture
+   shows the gradient actually on the picture. */
 .legend .swatch.heat {
-  background: linear-gradient(90deg, #2b3aa0, #1e9e8a, #d8d13c, #e8452e);
+  background: linear-gradient(90deg, #184f95, #2a78d6, #6da7ec, #cde2fb);
 }
-.legend .swatch.path { background: rgba(255, 255, 255, .72); }
+/* Rings rather than a fill, matching how the measured layer is drawn. */
+.legend .swatch.gazeheat {
+  background: repeating-linear-gradient(90deg,
+    #d95926 0 2px, transparent 2px 5px);
+}
+.legend .swatch.path { background: #3987e5; }
 
 .empty-state {
   text-align: center; color: var(--muted);
@@ -58,7 +65,7 @@ html, body { height: 100%; overflow: hidden; background: #0b0c10; }
 #model { pointer-events: none; }
 #model .fix-num { font: 700 13px -apple-system, system-ui, sans-serif; fill: #fff; }
 
-.legend .swatch.model { background: #ff7a45; }
+.legend .swatch.model { background: #199e70; }
 
 /* Synthetic output must be impossible to mistake for a model prediction —
    the entire point of the demo collapses if placeholder data is presented
@@ -164,7 +171,7 @@ body.has-experimental .display { padding-bottom: 40px; }
 /* Measured gaze — visually distinct from the tapped predictions, because the
    whole point is that they are different kinds of evidence. */
 #gaze { pointer-events: none; }
-.legend .swatch.gaze { background: #b06bff; }
+.legend .swatch.gaze { background: #d95926; }
 
 #gazepaths { pointer-events: none; }
 #gazepaths .gnum { font: 700 11px -apple-system, system-ui, sans-serif; fill: #1a0a2e; }
@@ -177,8 +184,8 @@ body.has-experimental .display { padding-bottom: 40px; }
   font-size: clamp(1.6rem, 3.2vw, 2.75rem); font-weight: 700; line-height: 1;
   font-variant-numeric: tabular-nums;
 }
-.tally-item.tap .n { color: var(--accent); }
-.tally-item.gaze .n { color: #b06bff; }
+.tally-item.tap .n { color: #3987e5; }
+.tally-item.gaze .n { color: #d95926; }
 .tally-item .lbl { color: var(--muted); font-size: 0.9375rem; }
 
 /* What the audience is actually looking at. */
@@ -187,12 +194,21 @@ body.has-experimental .display { padding-bottom: 40px; }
   border-radius: 10px; padding: 12px 18px; font-size: clamp(.875rem, 1.5vw, 1.0625rem);
   line-height: 1.5;
 }
-.explain .kn { display: inline-flex; align-items: center; gap: 6px; margin-right: 16px; }
+.explain .kn { display: inline-flex; align-items: baseline; gap: 6px;
+                margin-right: 18px; }
+.explain .kn .txt { display: inline; }
 .explain .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
-.explain .dot.tap { background: #e8452e; }
-.explain .dot.gaze { background: #b06bff; }
-.explain .dot.model { background: #ff7a45; }
+/* One identity per source, shared with the charts and with the marks on the
+   picture. The previous trio (#5b8cff tap, #b06bff gaze, #ff7a45 model)
+   failed colour-vision validation outright — blue against purple separated by
+   deltaE 1.5 under deutan simulation and 13.2 with normal vision, under a
+   floor of 15 — so roughly one man in twelve could not tell the two human
+   layers apart on a projected screen. */
+.explain .dot.tap { background: #3987e5; }
+.explain .dot.gaze { background: #d95926; }
+.explain .dot.model { background: #199e70; }
 .explain .none { color: var(--muted); }
+.explain .between { color: var(--muted); display: block; margin-top: 8px; }
 
 
 /* Comparison charts, projected.
@@ -256,4 +272,20 @@ body.has-experimental .display { padding-bottom: 40px; }
    presenter's laptop preview often is not. */
 @media (max-aspect-ratio: 1/1), (max-width: 900px) {
   .charts-overlay .cbody { flex-direction: column; overflow-y: auto; }
+}
+
+
+/* The analysis panel names its two sides before it names a number. */
+.analysis .scope {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px; font-size: clamp(.8125rem, 1.15vw, 1rem);
+}
+.analysis .scope .kn { display: inline-flex; align-items: center; gap: 6px;
+                       font-weight: 600; }
+.analysis .scope .dot { width: 12px; height: 12px; border-radius: 50%; }
+.analysis .scope .dot.tap { background: #3987e5; }
+.analysis .scope .dot.model { background: #199e70; }
+.analysis .scope .vs { color: var(--muted); }
+.analysis .scope .excl {
+  color: var(--warn); font-size: 0.9em; margin-left: 4px;
 }

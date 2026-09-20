@@ -305,3 +305,108 @@ def test_a_deliberate_404_keeps_its_own_message(client):
         "scanpath_norm": [[0.5, 0.5]]})
     assert r.status_code == 404
     assert "nope.jpg" in r.json()["detail"]
+
+
+# --- the display's overlays must say what they are ------------------------
+
+DISPLAY = STATIC / "display.html"
+HEATMAP = STATIC / "heatmap.js"
+DISPLAY_CSS = STATIC / "display.css"
+
+
+def test_the_two_density_layers_do_not_share_a_ramp():
+    """They did, and the legend called one of them purple while it wasn't.
+
+    Both heatmaps were drawn by one call with one rainbow ramp, so the
+    tapped and measured clouds were the same picture twice.
+    """
+    hm = HEATMAP.read_text()
+    assert "export const RAMPS" in hm
+    assert "blue:" in hm and "orange:" in hm
+    page = DISPLAY.read_text()
+    assert "'blue'" in page and "'orange'" in page
+
+
+def test_measured_gaze_is_drawn_as_contours_not_a_second_cloud():
+    """Different form, not just a different hue: a filled cloud painted over
+    another filled cloud hides it completely."""
+    assert "'contour'" in DISPLAY.read_text()
+    assert "function contour(" in HEATMAP.read_text()
+
+
+def test_the_legend_names_colours_that_are_actually_drawn():
+    page = DISPLAY.read_text()
+    for gone in ("Warm areas", "Purple cloud", "Purple traces"):
+        assert gone not in page, f"{gone} describes a mark that is not drawn"
+    assert "Blue cloud" in page
+    assert "Orange rings" in page
+    assert "Green numbered path" in page
+
+
+def _without_comments(text: str) -> str:
+    """Drop /* ... */ and // ... so a comment explaining why a colour was
+    removed does not read as the colour coming back."""
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", text, flags=re.M)
+
+
+def test_display_overlays_use_the_validated_slots():
+    """The old trio failed CVD validation: blue against purple separated by
+    deltaE 1.5 under deutan simulation, 13.2 with normal vision."""
+    for path in (DISPLAY, DISPLAY_CSS):
+        text = _without_comments(path.read_text())
+        for failed in ("#b06bff", "#d3a5ff", "#ff7a45", "#e8452e"):
+            assert failed not in text, f"{failed} is back in {path.name}"
+
+
+def test_the_caption_says_the_two_groups_are_different_people():
+    """Two clouds on one picture read as before-and-after for one person
+    unless it is said otherwise, and that is the one thing they are not."""
+    assert "different people" in DISPLAY.read_text()
+
+
+def test_analysis_declares_which_two_things_it_compares(client):
+    """It reads markers, so it is the tap group against the model, and the
+    measured group is not in it. A panel headed "agreement" beside a screen
+    showing two human layers has to say which one it means."""
+    client.post("/api/assign", json={"participant_uuid": "tapper-0001"})
+    tap(client, "tapper-0001", CENTRE)
+    body = client.get("/api/analysis").json()
+    assert body["compares"] == {"a": "tapped", "b": "model", "n_a": 1,
+                                "n_b": 0, "excludes": "measured"}
+
+
+def test_analysis_ignores_gaze_entirely(client):
+    """Pinning the scope: gaze sessions must not move these numbers."""
+    for i in range(4):
+        tap(client, f"tapper-{i:04d}", TOP_LEFT)
+    before = client.get("/api/analysis").json()["compares"]["n_a"]
+    for i in range(4):
+        gaze(client, f"gazer-{i:04d}", BOTTOM_RIGHT)
+    after = client.get("/api/analysis").json()["compares"]
+    assert after["n_a"] == before == 4
+    assert after["excludes"] == "measured"
+
+
+def test_the_projected_charts_carry_no_session_specific_interpretation():
+    """The headline sentence read the data for the audience. What it said
+    changes every session, so it is the presenter's line, not the app's."""
+    page = DISPLAY.read_text()
+    assert "headlineText" not in page
+    assert "headlineText" not in (STATIC / "charts.js").read_text()
+
+
+def test_the_difference_map_can_be_drawn_over_the_scene():
+    """So the audience remembers what the cells are cells of."""
+    module = (STATIC / "charts.js").read_text()
+    assert "o.image" in module and 'svg("image"' in module
+    assert "image: opts.image" in module
+    assert "sceneUrl(d)" in DISPLAY.read_text()
+
+
+def test_grids_take_the_pictures_shape():
+    """A square grid over a 4:3 photograph does not line up with the thing
+    it describes."""
+    module = (STATIC / "charts.js").read_text()
+    assert "o.aspect" in module
+    assert "H = Math.round(300 / (o.aspect || 1))" in module

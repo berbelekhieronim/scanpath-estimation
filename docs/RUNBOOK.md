@@ -219,16 +219,42 @@ Human taps, Agreement, Display state — showing exactly what the display is
 drawn from. Useful for making the point that the picture is computed, not
 illustrated. It refreshes while open, so taps arriving live appear in it.
 
+### What each overlay looks like
+
+One identity per source, the same three colours as the charts:
+
+| Layer | On the picture |
+|---|---|
+| **Tapped — heatmap** | blue cloud: where people *said* they would look |
+| **Tapped — scanpaths** | blue lines, first tap ringed pale |
+| **Measured — heatmap** | orange **rings**, tighter rings = more looking |
+| **Measured — scanpaths** | orange traces, start ringed pale |
+| **Model — scanpath** | green numbered path, faint green ghosts behind it |
+
+Measured gaze is drawn as rings rather than a second cloud on purpose: two
+filled clouds on one picture hide each other, and a different shape reads as a
+different kind of thing from the back of a room.
+
+**Say out loud that blue and orange are different people.** Nobody both tapped
+and was eye-tracked — tapping first would change where you then look. The
+caption on screen says it, but an audience hears it better than it reads it.
+
+---
+
 ## 5. Reading the analysis panel
 
-The headline compares the model against the **human-to-human ceiling**, not
-against perfection — neither side is ground truth, so "as well as people agree
-with each other" is the honest claim.
+**This panel is the tap group vs the model. Measured gaze is not in it.** It
+is computed from taps, and always has been. The panel says so on screen. For
+all three sources together, use the charts in section 5b.
+
+The headline compares the model against the **tap-group-to-itself ceiling**,
+not against perfection — neither side is ground truth, so "as well as those
+people agree with each other" is the honest claim.
 
 | Metric | Means |
 |---|---|
 | **Spearman ρ** | Do they emphasise the same areas? Compare it against the random and centre-bias figures underneath, not against 1.0 |
-| **Human-to-human ceiling** | Split the room in half, score one against the other. This is the realistic maximum |
+| **Tap group vs itself (ceiling)** | Split the tap group in half, score one against the other. This is the realistic maximum |
 | **Order similarity** | Do they visit areas in the same sequence? Compare against the "people agree" figure beside it |
 | **NSS** | Standard saliency measure. 0 is chance |
 | **Areas of interest** | Clustered from pooled human *and* model points, so neither side defines its own yardstick |

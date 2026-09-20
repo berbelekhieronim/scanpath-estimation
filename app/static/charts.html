@@ -173,9 +173,13 @@ async function load() {
   renderSubtitle(d);
   renderBanners(d);
   put('legend', legendRow(d));
-  put('panels', densityPanels(d));
+  const scene = d.image ? '/img/' + encodeURIComponent(d.image.filename) : null;
+  const aspect = (d.image && d.image.width && d.image.height)
+    ? d.image.width / d.image.height : 1;
+
+  put('panels', densityPanels(d, {aspect}));
   put('panel-scale', sequentialScale());
-  const diff = differenceMap(d);
+  const diff = differenceMap(d, {image: scene, aspect});
   $('diff-section').hidden = !diff;
   put('diff', diff);
   put('dots', dotPlot(d));
