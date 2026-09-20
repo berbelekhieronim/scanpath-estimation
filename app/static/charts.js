@@ -235,9 +235,10 @@ export function densityPanels(data, opts = {}) {
       card.appendChild(gridSvg(m.cells, data.grid, {
         aria: `${s.label}: attention per grid cell`,
         aspect: opts.aspect,
-        // Fainter than the difference map's plate: three of these sit side
-        // by side and have to be compared to each other, not studied.
-        image: opts.image, plate: 0.34,
+        // Slightly fainter than the difference map's plate, and with more
+        // translucent fills, because three of these sit side by side and have
+        // to be compared to each other rather than studied one at a time.
+        image: opts.image, plate: 0.5, fillOpacity: 0.72,
         colour: (v) => seqColour(v, max),
         label: (v) => Math.round(v * 100) + "%",
         hover,
