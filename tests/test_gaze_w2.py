@@ -251,7 +251,7 @@ def test_page_reuses_the_tracker_across_attempts():
     A retry therefore used to double the memory held, and a third attempt
     tripled it — which is exactly when the tab died."""
     src = (STATIC / "calibrate.html").read_text()
-    assert "if (!tracker) tracker = createTracker" in src
+    assert "if (!tracker) {" in src and "createTracker" in src
     assert "tracker.restart()" in src
 
 
@@ -293,3 +293,40 @@ def test_previous_run_is_shown_on_screen():
     src = (STATIC / "calibrate.html").read_text()
     assert "showLastRun" in src
     assert "Previous run did not finish" in src
+
+
+
+# --- backend selection (iOS tab kill at only 26MB of tensors) --------------
+
+def test_ios_gets_the_cpu_backend_by_default():
+    """A real iPhone died mid-calibration holding 26MB of tensors — far too
+    little for a heap exhaustion. On WebGL every tensor is a GPU texture and
+    iOS Safari's texture budget is much tighter than its heap, so the CPU
+    backend removes that failure mode entirely."""
+    src = (STATIC / "gaze" / "tracker.js").read_text()
+    body = _method_body(src, "  async _selectBackend() {")
+    assert "isIOS()" in body and "'cpu'" in body
+    assert "setBackend" in body
+
+
+def test_backend_choice_is_overridable():
+    assert "params.get('backend')" in (STATIC / "calibrate.html").read_text()
+
+
+def test_backend_selection_precedes_model_load():
+    """Switching backends after the weights load would not move them."""
+    src = (STATIC / "gaze" / "tracker.js").read_text()
+    start = _method_body(src, "  async start() {\n    try {")
+    assert start.index("_selectBackend") < start.index("new lib.WebEyeTrack")
+
+
+def test_memory_is_recorded_per_point_not_just_once():
+    """One snapshot cannot tell a steady state from a climb."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "memorySeries" in src
+    assert "this.memorySeries.push" in src
+
+
+def test_backend_is_reported_in_diagnostics():
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "backend: this.tracker.backend" in src

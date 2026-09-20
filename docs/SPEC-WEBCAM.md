@@ -591,6 +591,55 @@ posting to the server, since two rounds ended with "no logs": a crashed tab
 cannot report itself, and a server-side record is no use to the person holding
 the phone.
 
+### 13.9 Fourth test: real data, and a better diagnosis
+
+The breadcrumb finally reported:
+
+```
+stage: calibrating · frames 104 · face 100% · points 5
+224 tensors / 26.4 MB · attempt 1
+```
+
+Three things in that, each ruling something out.
+
+**Attempt 1.** So the retry leak in §13.8, real though it was, is not the
+cause. It crashes on the very first attempt.
+
+**Face 100%, 104 frames.** Tracking was working perfectly. This is not a
+detection or lighting failure.
+
+**26.4 MB of tensors.** Far too little to exhaust an iPhone's JS heap, which
+kills the straightforward memory-exhaustion theory from §13.7 as well.
+
+What those numbers fit is **WebGL texture exhaustion**. On the WebGL backend
+every tensor is a GPU texture, and an adaptation step over a batch of
+512x128x3 eye patches allocates many transient ones that never appear in
+`tf.memory()`. iOS Safari's texture budget is far tighter than its heap, and
+it kills the tab rather than failing the allocation. Dying at the fifth point
+fits: the batch grows with each calibration point, so each step is bigger than
+the last.
+
+**The fix is to stop using the GPU.** The bundle registers both a `cpu` and a
+`webgl` backend, and `_tfengine.setBackend('cpu')` works — verified in a
+browser. The CPU backend uses plain typed arrays, so the texture budget stops
+being a constraint at all. Same weights, same arithmetic, same accuracy; only
+speed differs, and BlazeGaze is 0.15 GFLOPs, which is small enough to be
+viable on a CPU.
+
+iOS now gets CPU by default, everything else keeps WebGL, and `?backend=cpu`
+or `?backend=webgl` overrides either way. Verified per platform: an iPhone
+user-agent selects `cpu`, an Android one selects `webgl`, and the override
+wins over both. The backend is shown in the live chip and recorded in the
+diagnostics.
+
+**The breadcrumb now records tensor count after every point**, not one
+snapshot, because a single number cannot distinguish a steady state from a
+climb — and the climb is the whole question.
+
+**Frame rate is the thing to watch now.** CPU inference is slower, and if it
+drops below roughly 8 fps the calibration windows will need lengthening. That
+trade is worth making: a slow calibration is usable, a dead tab is not.
+
 ### 13.5 Verified, and not
 
 Driven end to end in a headless browser against the mock backend: consent flow

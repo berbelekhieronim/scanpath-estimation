@@ -53,6 +53,7 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
   constructor(videoEl, {
     scriptUrl = '/static/vendor/webeyetrack/webeyetrack.umd.js',
     maxPoints = 9,
+    backend = 'auto',
   } = {}) {
     super();
     this.videoEl = videoEl;
@@ -67,6 +68,8 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     // of them on each call, so a generous value buys nothing and costs real
     // memory — which on iOS Safari is how a tab gets killed.
     this.maxPoints = maxPoints;
+    this.backendPref = backend;
+    this.backend = null;
     this.name = 'webeyetrack';
     this.version = '0.0.2';
     this._t0 = 0;
@@ -162,6 +165,8 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
       // WebEyeTrack (main thread), not WebEyeTrackProxy: the worker bundle
       // the Proxy needs is missing from the published package. See
       // vendor/webeyetrack/VENDORED.md.
+      await this._selectBackend();
+
       this.wet = new lib.WebEyeTrack(this.maxPoints);
       await this.wet.initialize();   // BlazeGaze weights + MediaPipe FaceLandmarker
 
@@ -236,6 +241,37 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     this._lastCalibPt = [nx, ny];
     return { accepted: true, points: this.wet.calibData
       ? this.wet.calibData.supportX.length : null };
+  }
+
+  /* Choose the TF.js backend before the model loads.
+   *
+   * A real iPhone killed the tab mid-calibration holding only 26 MB of
+   * tensors — far too little for a JS-heap exhaustion. On the WebGL backend
+   * every tensor is a GPU texture, and a training step over a batch of
+   * 512x128x3 eye patches allocates many transient ones; iOS Safari's texture
+   * budget is much tighter than its heap. The CPU backend uses plain typed
+   * arrays, so that entire failure mode disappears.
+   *
+   * The weights and the arithmetic are identical either way; only speed
+   * differs, and BlazeGaze is small enough (0.15 GFLOPs) that CPU is viable.
+   * Reliability beats frame rate here, so iOS gets CPU by default.
+   */
+  async _selectBackend() {
+    const engine = window._tfengine;
+    if (!engine || typeof engine.setBackend !== 'function') return;
+
+    let want = this.backendPref;
+    if (want === 'auto') want = isIOS() ? 'cpu' : 'webgl';
+    if (want === 'default') { this.backend = engine.backendName; return; }
+
+    try {
+      const available = Object.keys(engine.registryFactory || {});
+      if (!available.includes(want)) { this.backend = engine.backendName; return; }
+      await engine.setBackend(want);
+      this.backend = engine.backendName;
+    } catch {
+      this.backend = engine.backendName || null;
+    }
   }
 
   /** TF.js tensor counts, for spotting a leak from outside the library. */
@@ -362,6 +398,8 @@ export class MockBackend extends GazeTrackerBase {
   destroy() { this.stop(); }
 
   memory() { return { numTensors: 0, mb: 0 }; }
+  get backend() { return 'mock'; }
+  set backend(_v) { /* mock has no backend to set */ }
   releaseCalibrationMemory() { return { before: this.memory(), after: this.memory() }; }
 
   stop() {
@@ -400,6 +438,12 @@ export async function preflight() {
       return { ...dep, ok: false, detail: String(err && err.message || err) };
     }
   }));
+}
+
+export function isIOS() {
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) ||
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 export function describeError(err) {

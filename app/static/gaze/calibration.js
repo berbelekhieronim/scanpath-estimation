@@ -83,6 +83,9 @@ export class Calibration {
 
     this.memoryPeak = null;
     this.memoryFreed = null;
+    // Per-point tensor counts. A single snapshot cannot distinguish a steady
+    // state from a climb, and the climb is what matters.
+    this.memorySeries = [];
     this.lastSampleAt = 0;
     this.lastFaceAt = 0;
     this.framesSeen = 0;
@@ -128,6 +131,8 @@ export class Calibration {
     const mem = this.tracker.memory ? this.tracker.memory() : null;
     return {
       memory: mem,
+      backend: this.tracker.backend || null,
+      memorySeries: this.memorySeries,
       memoryPeak: this.memoryPeak,
       memoryFreed: this.memoryFreed || null,
       framesSeen: this.framesSeen,
@@ -202,8 +207,11 @@ export class Calibration {
         // Watch tensor count across calibration: a monotonic climb is the
         // signature of the leak that kills the tab.
         const mem = this.tracker.memory ? this.tracker.memory() : null;
-        if (mem && (!this.memoryPeak || mem.numTensors > this.memoryPeak.numTensors)) {
-          this.memoryPeak = { ...mem, afterPoint: this.accepted };
+        if (mem) {
+          this.memorySeries.push([this.accepted, mem.numTensors, mem.mb]);
+          if (!this.memoryPeak || mem.numTensors > this.memoryPeak.numTensors) {
+            this.memoryPeak = { ...mem, afterPoint: this.accepted };
+          }
         }
         this.onProgress({ accepted: this.accepted, total: points.length,
                           rejected: this.rejected.length, memory: mem });

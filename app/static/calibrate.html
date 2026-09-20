@@ -175,6 +175,10 @@ function showLastRun(saved) {
   if (saved.accepted != null) bits.push(`points ${saved.accepted}`);
   if (saved.memory) bits.push(`${saved.memory.numTensors} tensors / ${saved.memory.mb}MB`);
   if (saved.attempts != null) bits.push(`attempt ${saved.attempts}`);
+  if (saved.backend) bits.push(`backend ${saved.backend}`);
+  if (saved.memorySeries && saved.memorySeries.length) {
+    bits.push(`tensors by point: ${saved.memorySeries.map((s) => s[1]).join(' → ')}`);
+  }
   el.innerHTML =
     `<div style="border:1px solid var(--warn);border-radius:8px;padding:10px 12px">
        <strong style="color:var(--warn)">Previous run did not finish</strong><br>
@@ -255,7 +259,10 @@ async function begin() {
   // model that nothing ever frees, which is what killed the tab on the
   // second or third try.
   const reusing = !!tracker;
-  if (!tracker) tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'));
+  if (!tracker) {
+    tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'),
+                            { backend: params.get('backend') || 'auto' });
+  }
   tracker.onStatus = (status, err) => {
     if (status === STATUS.ERROR) {
       overlay('The camera could not start', `<p>${err || ''}</p>`,
@@ -319,7 +326,8 @@ async function begin() {
     if (!d.framesSeen) { chip.textContent = 'starting…'; chip.className = 'face-chip'; return; }
     const stale = d.msSinceFace == null || d.msSinceFace > 1500;
     const mem = d.memory ? ` · ${d.memory.numTensors}t ${d.memory.mb}MB` : '';
-    chip.textContent = (stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`) + mem;
+    const be = d.backend ? ` · ${d.backend}` : '';
+    chip.textContent = (stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`) + mem + be;
     chip.className = 'face-chip ' + (stale ? 'bad' : 'ok');
     if (!window._crumbTick || Date.now() - window._crumbTick > 2500) {
       window._crumbTick = Date.now();
