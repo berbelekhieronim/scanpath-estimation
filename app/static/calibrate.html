@@ -90,6 +90,10 @@
     .banner p { font-size: 0.6875rem; }
     #last-run { display: none; }
     video { width: 76px; height: 57px; }
+    .rotate-guard { padding: 14px 20px; }
+    .rotate-guard .icon { font-size: 1.75rem; margin-bottom: 6px; }
+    .rotate-guard h2 { font-size: 1.125rem; margin-bottom: 6px; }
+    .rotate-guard p { font-size: 0.875rem; }
   }
   .overlay button { margin-top: 18px; padding: 14px 26px; font-size: 1rem; }
   .grade { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
@@ -170,8 +174,9 @@
       <div id="ov-body">
         <p><strong>Check your eyes are visible</strong> in the small camera
            preview, top right. That matters more than anything else.</p>
-        <p>Hold the phone steady, or rest it on the desk — either is fine,
-           just keep it in the same place throughout.</p>
+        <p>Hold the phone <strong>upright</strong> and steady, or rest it on
+           the desk — either is fine, just keep it the same way up and in the
+           same place throughout.</p>
         <p>A dot will move around the screen. Look straight at it, then tap it.</p>
       </div>
       <button class="primary" id="ov-btn">Start</button>
@@ -195,28 +200,12 @@
 import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
 import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS } from '/static/gaze/calibration.js';
 import { deviceInfo } from '/static/device.js';
-import { track as trackViewport, viewport, onChange as onViewportChange }
-  from '/static/gaze/viewport.js';
+import { track as trackViewport, viewport, onChange as onViewportChange,
+         isHandset } from '/static/gaze/viewport.js';
 
 // Before anything measures or lays out anything.
 trackViewport();
 
-/* A calibration is a mapping fitted to one screen shape. Rotate the device
-   and every target has moved, so the mapping is wrong — silently, and in a
-   way that looks like ordinary inaccuracy. The run pauses instead. */
-let lockedOrientation = null;
-let paused = false;
-
-function lockOrientation() { lockedOrientation = viewport().orientation; }
-
-onViewportChange((now) => {
-  if (!lockedOrientation) return;
-  const wrong = now.orientation !== lockedOrientation;
-  if (wrong === paused) return;
-  paused = wrong;
-  $('rotate-guard').classList.toggle('hidden', !wrong);
-  if (wrong) crumb('rotated', { to: now.orientation });
-});
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -318,6 +307,64 @@ async function flushCrumb() {
 
 function clearCrumb() { try { localStorage.removeItem(CRUMB_KEY); } catch {} }
 
+/* Orientation, on two counts.
+ *
+ * A handset must be upright. Sideways it gives the picture about a third of
+ * the eye's field and leaves roughly 290px of usable height once the browser
+ * bars are counted — measurably the worse way to run this, and the reason
+ * the flow simply asks for portrait rather than supporting both equally.
+ * A laptop is exempt: it is landscape by definition and is the most accurate
+ * device here.
+ *
+ * On top of that, whatever the device, a calibration is a mapping fitted to
+ * one screen shape. Rotating after it is fitted makes it wrong silently, in
+ * a way that reads as ordinary inaccuracy, so the run pauses rather than
+ * recording samples that would look like data. */
+const REQUIRED = isHandset() ? 'portrait' : null;
+let lockedOrientation = null;
+let paused = false;
+
+function lockOrientation() { lockedOrientation = viewport().orientation; }
+
+function orientationProblem(now) {
+  if (REQUIRED && now.orientation !== REQUIRED) return 'required';
+  if (lockedOrientation && now.orientation !== lockedOrientation) return 'moved';
+  return null;
+}
+
+const GUARD_COPY = {
+  // Short on purpose: this screen only ever appears on the ~290px a phone
+  // has in landscape, so anything longer would need scrolling to read.
+  required: ['Turn your phone upright',
+             'Sideways there is too little screen to measure against. '
+             + 'Turn it upright and this carries on.'],
+  moved: ['Turn the phone back',
+          'The setup was measured the other way up, so it no longer fits. '
+          + 'Turn it back and this carries on.'],
+};
+
+function applyOrientationGuard() {
+  const problem = orientationProblem(viewport());
+  paused = !!problem;
+  if (problem) {
+    const [title, body] = GUARD_COPY[problem];
+    $('rg-title').textContent = title;
+    $('rg-body').textContent = body;
+  }
+  $('rotate-guard').classList.toggle('hidden', !problem);
+  return problem;
+}
+
+onViewportChange((now, before) => {
+  const was = paused;
+  const problem = applyOrientationGuard();
+  if (problem && !was) crumb('orientation-blocked', { problem, to: now.orientation });
+});
+
+// Checked on load, not only after calibration starts: arriving sideways
+// showed the intro at 290px tall with the Start button pushed off it.
+applyOrientationGuard();
+
 /* Immediate acknowledgement of a tap.
  *
  * There is up to a second between tapping and the next target appearing
@@ -358,6 +405,9 @@ function renderProgress(done, total, kind) {
 }
 
 async function begin() {
+  // Starting sideways would fit the calibration to the orientation we are
+  // about to refuse, so the guard is checked before anything else happens.
+  if (applyOrientationGuard()) return;
   attempts++;
   hideOverlay();
   // Whatever way up the device is now is the geometry everything after this

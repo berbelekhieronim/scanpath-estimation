@@ -352,13 +352,16 @@ What follows from it:
 
 - **Do not present a grid finer than 3 × 3.** This is the same constraint as
   before, and this is where it comes from.
-- Landscape helps a little — the picture fills more of the screen, about 17%
-  error instead of 22% — but it is not a fix, and it costs vertical room:
-  a phone in landscape leaves roughly 290px once Safari's bars are counted.
-- **Do not rotate the phone mid-run.** The calibration is fitted to one
-  screen shape, so turning the device invalidates it. The app now pauses and
-  asks for it to be turned back rather than recording samples that would look
-  like data.
+- **Phones must be upright.** The app enforces it: a handset held sideways
+  gets a "turn your phone upright" screen until it is. Landscape looked like
+  it might help (the picture fills more of the screen) but it costs most of
+  the vertical room — roughly 290px once Safari's bars are counted — and it
+  was not worth the trade.
+- **Laptops are exempt**, since they are landscape by definition and are the
+  most accurate device here. So are tablets.
+- **Do not rotate mid-run**, on any device. The calibration is fitted to one
+  screen shape, so turning it invalidates it. The app pauses and asks for it
+  to be turned back rather than recording samples that would look like data.
 - If some participants can use laptops, their gaze data is materially better.
   Worth knowing when reading a thin measured group.
 

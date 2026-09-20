@@ -878,3 +878,47 @@ Chromium does not reproduce Safari's split between the layout and visual
 viewports, so the fix is verified as "the layout follows the measurement" at
 812x294 and 812x375 rather than as "confirmed on an iPhone". Worth one pass
 on the actual device.
+
+
+---
+
+## 18. Portrait, on handsets (2026-09-20)
+
+Landscape works now, but it is measurably the worse way to run this, so the
+gaze flow asks for portrait rather than supporting both as equals.
+
+**The requirement is for handsets and nothing else.** A laptop is landscape
+by definition and is the most accurate device this runs on — blocking it
+would turn a fix into an outage. `isHandset()` is touch capability plus a
+physical short edge of 500px or less, measured on the short edge because that
+does not change when the device is rotated. A tablet is exempt too: the
+penalty scales with screen size and a 768px short edge does not earn a block.
+
+Two separate checks share one guard screen:
+
+- **`required`** — a handset that is not upright. Checked on load, not only
+  when calibration starts: arriving sideways previously showed the intro
+  screen at 290px tall with the Start button pushed off the bottom of it.
+  `begin()` re-checks before doing anything, since starting sideways would
+  fit the calibration to the orientation we are about to refuse.
+- **`moved`** — any device rotated after its calibration was fitted. Still
+  applies on a tablet or a laptop, because the calibration is a mapping onto
+  one screen shape whatever the device.
+
+The guard's own copy is deliberately short. It only ever appears on the
+~290px a phone has in landscape, so anything longer would need scrolling to
+read the instruction telling you how to stop needing to scroll.
+
+**One bug worth recording**, because it was self-inflicted and total: the
+guard was first wired up in the module preamble, above the `const $` it
+calls. That is a temporal-dead-zone throw at module evaluation, which killed
+the entire script — every page dead on arrival, while still *looking* fine
+because the intro overlay is visible in the static HTML. Verified across
+phone-portrait, phone-landscape, laptop-landscape and a live rotation before
+being believed.
+
+**Still unresolved:** the tap group is not orientation-constrained, so a
+tapper in landscape sees a larger picture than a gaze participant in
+portrait. Taps are normalised to the image so the coordinates remain
+comparable, but the two groups are not seeing the stimulus at the same visual
+angle. Whether that matters enough to constrain the tap flow too is open.

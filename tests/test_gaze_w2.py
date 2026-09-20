@@ -231,8 +231,13 @@ def test_instructions_lead_with_eyes_visible_in_the_preview():
     to see your own eyes in the preview matters more, and mandating the desk
     was awkward — either posture works if the eyes are in frame."""
     src = (STATIC / "calibrate.html").read_text()
-    assert "eyes are visible" in src
-    assert "Hold the phone steady, or rest it on the desk" in src
+    # Collapsed, because the source wraps these sentences across lines.
+    flat = " ".join(src.split())
+    assert "eyes are visible" in flat
+    # Either posture still works — held or resting — but it must be upright,
+    # because sideways is measurably the worse way to run this.
+    assert "rest it on the desk" in flat
+    assert "<strong>upright</strong>" in flat
 
 
 def test_all_overlay_copy_lives_inside_ov_body():

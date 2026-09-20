@@ -485,6 +485,42 @@ def test_rotating_pauses_instead_of_recording_nonsense():
     assert "if (paused) { rotatedAway = true; return; }" in page
 
 
+def test_handsets_must_be_upright_but_laptops_are_exempt():
+    """Portrait is required because a phone held sideways gives the picture
+    about a third of the eye's field. None of that applies to a laptop, which
+    is landscape by definition and the most accurate device here — blocking
+    it would turn a fix into an outage."""
+    js = VIEWPORT_JS.read_text()
+    assert "export function isHandset()" in js
+    assert "maxTouchPoints" in js
+    # Measured on the short edge, which does not change when rotated.
+    assert "Math.min(screen.width || 0, screen.height || 0)" in js
+
+    page = CALIBRATE.read_text()
+    assert "const REQUIRED = isHandset() ? 'portrait' : null;" in page
+    assert "Turn your phone upright" in page
+
+
+def test_the_guard_is_checked_on_load_and_before_starting():
+    """Arriving sideways showed a 290px-tall intro with Start pushed off it,
+    and starting sideways would fit the calibration to the orientation we are
+    about to refuse."""
+    page = CALIBRATE.read_text()
+    assert "if (applyOrientationGuard()) return;" in page
+    # Called at load, not only from begin().
+    assert page.count("applyOrientationGuard()") >= 3
+
+
+def test_the_orientation_guard_runs_after_its_dependencies_exist():
+    """It referenced $ from the module preamble, before the const that
+    defines it — a temporal-dead-zone throw that killed the whole module and
+    left every page dead on arrival."""
+    page = CALIBRATE.read_text()
+    dollar = page.index("const $ = (id) => document.getElementById(id);")
+    assert page.index("function applyOrientationGuard()") > dollar
+    assert page.index("const REQUIRED = isHandset()") > dollar
+
+
 def test_orientation_is_recorded_with_the_calibration(client):
     """So a session reads back knowing which way up it was taken. Pydantic
     drops unknown fields silently, so this asserts it round-trips rather

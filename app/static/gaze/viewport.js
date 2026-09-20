@@ -73,6 +73,20 @@ export function track() {
   return box;
 }
 
+/* Is this a handset?
+ *
+ * The portrait requirement exists because a phone held sideways gives the
+ * picture a third of the eye's field and leaves about 290px of usable height.
+ * None of that is true of a laptop, which is landscape by definition and is
+ * the most accurate device this runs on — so the requirement is for handsets
+ * and nothing else. Measured on the short edge of the physical screen, which
+ * does not change when the device is rotated. */
+export function isHandset() {
+  const touch = (navigator.maxTouchPoints || 0) > 0;
+  const shortEdge = Math.min(screen.width || 0, screen.height || 0);
+  return touch && shortEdge > 0 && shortEdge <= 500;
+}
+
 /** Notified on every real change, with (current, previous). */
 export function onChange(fn) {
   listeners.add(fn);
