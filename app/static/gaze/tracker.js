@@ -52,7 +52,7 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
   /** @param {HTMLVideoElement} videoEl - must already be in the DOM with an id */
   constructor(videoEl, {
     scriptUrl = '/static/vendor/webeyetrack/webeyetrack.umd.js',
-    maxPoints = 16,
+    maxPoints = 9,
   } = {}) {
     super();
     this.videoEl = videoEl;
@@ -61,6 +61,11 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     // the most recent that many. A nine-point calibration built on the
     // default would silently throw away the first four points and report a
     // confident, wrong model. Verified in upstream's WebEyeTrack.ts.
+    //
+    // Set to exactly the number of calibration points, not more. Every
+    // retained point holds a 512x128x3 eye patch and adapt() concatenates all
+    // of them on each call, so a generous value buys nothing and costs real
+    // memory — which on iOS Safari is how a tab gets killed.
     this.maxPoints = maxPoints;
     this.name = 'webeyetrack';
     this.version = '0.0.2';
@@ -180,6 +185,53 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
       ? this.wet.calibData.supportX.length : null };
   }
 
+  /** TF.js tensor counts, for spotting a leak from outside the library. */
+  memory() {
+    try {
+      const tf = window.tf || (window._tfengine && window._tfengine.registry && window.tf);
+      if (tf && tf.memory) {
+        const m = tf.memory();
+        return { numTensors: m.numTensors, mb: +(m.numBytes / 1048576).toFixed(1) };
+      }
+      if (window._tfengine && window._tfengine.state) {
+        return { numTensors: window._tfengine.state.numTensors,
+                 mb: +(window._tfengine.state.numBytes / 1048576).toFixed(1) };
+      }
+    } catch {}
+    return null;
+  }
+
+  /* Free the retained calibration tensors once calibration is finished.
+   *
+   * adapt() keeps every support point — an eye patch, a head vector and a
+   * face origin per calibration point — and upstream disposes almost none of
+   * them (two tf.dispose calls against eleven tensor creations). They are
+   * only needed to adapt again; the fitted transform itself is already
+   * applied. Holding roughly 7MB of WebGL textures for no reason is how an
+   * iOS tab gets killed right after calibration.
+   *
+   * Only safe once no further calibration will happen.
+   */
+  releaseCalibrationMemory() {
+    const before = this.memory();
+    try {
+      const cd = this.wet && this.wet.calibData;
+      if (cd) {
+        (cd.supportX || []).forEach((s) => {
+          ['eyePatches', 'headVectors', 'faceOrigins3D'].forEach((k) => {
+            try { s && s[k] && s[k].dispose && s[k].dispose(); } catch {}
+          });
+        });
+        (cd.supportY || []).forEach((y) => {
+          try { y && y.dispose && y.dispose(); } catch {}
+        });
+        cd.supportX = []; cd.supportY = [];
+        cd.timestamps = []; cd.ptType = [];
+      }
+    } catch {}
+    return { before, after: this.memory() };
+  }
+
   stop() {
     try { this.cam && this.cam.stopWebcam(); } catch {}
     // Belt and braces: WebcamClient should release the stream, but a camera
@@ -251,6 +303,9 @@ export class MockBackend extends GazeTrackerBase {
     this._calibrated += 1;
     return { accepted: true, points: this._calibrated };
   }
+
+  memory() { return { numTensors: 0, mb: 0 }; }
+  releaseCalibrationMemory() { return { before: this.memory(), after: this.memory() }; }
 
   stop() {
     clearInterval(this._timer);

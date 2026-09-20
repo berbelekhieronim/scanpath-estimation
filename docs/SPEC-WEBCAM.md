@@ -513,6 +513,46 @@ A live face indicator now sits in the corner during calibration, so a stall is
 visible while it happens rather than only in the result, and the diagnostics
 are stored with each session.
 
+### 13.7 Second real-device test: the tab crashed
+
+The video fix worked — camera visible, launch clean, tap feedback good, taps
+registering. Then, after calibration, Safari showed *"a problem repeatedly
+occurred"*: the tab was killed. Almost certainly memory.
+
+**This was probably caused by the previous fix.** Setting `maxPoints` to 16 to
+stop calibration points being discarded also meant more retained support
+tensors, and `adapt()` concatenates every retained point on each call. Each
+point holds a 512x128x3 eye patch, roughly 786 KB. Upstream disposes almost
+nothing — two `tf.dispose` calls against eleven tensor creations — so nine
+points is about 7 MB of WebGL textures held live, re-concatenated nine times,
+with Adam's optimiser state on top. iOS Safari kills tabs for less.
+
+Three changes:
+
+**`maxPoints` is now exactly 9**, the number of calibration points. Anything
+higher buys nothing and costs memory.
+
+**Calibration tensors are freed the moment calibration ends.** They exist only
+to adapt again; the fitted transform is already applied. `releaseCalibrationMemory()`
+disposes the retained support tensors from outside the library, at exactly the
+point the crash happened.
+
+**Memory is now instrumented.** The live chip during calibration shows tensor
+count and megabytes alongside the face rate, the result screen reports peak
+and freed counts, and both are stored. A monotonic climb in tensor count is
+the signature to look for.
+
+**And the diagnostics now survive a crash.** That is the real lesson of both
+failed tests: when the tab dies, nothing is posted and there is nothing to
+look at. Progress is now written to `localStorage` as it happens and any
+unsent breadcrumb is posted on the next load, as a failed session with
+`crashed_at_<stage>`. A crashed run reports how far it got, its face rate and
+its tensor count. Verified by simulating a mid-run crash: the reloaded page
+reported the dead run.
+
+**`?light=1`** halves the calibration points as a fallback if memory is still
+the culprit. A weaker fit, but half the retained tensors.
+
 ### 13.5 Verified, and not
 
 Driven end to end in a headless browser against the mock backend: consent flow

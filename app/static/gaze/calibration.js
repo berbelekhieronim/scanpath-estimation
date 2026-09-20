@@ -72,6 +72,7 @@ export class Calibration {
     // not a defensive nicety.
     this.stallMs = opts.stallMs ?? 15000;
     this.shuffle = opts.shuffle !== false;
+    this.points = opts.points || CALIB_POINTS;
 
     this.phase = PHASE.IDLE;
     this.samples = [];
@@ -80,6 +81,8 @@ export class Calibration {
     this.validation = [];
     this._resolveTap = null;
 
+    this.memoryPeak = null;
+    this.memoryFreed = null;
     this.lastSampleAt = 0;
     this.lastFaceAt = 0;
     this.framesSeen = 0;
@@ -122,7 +125,11 @@ export class Calibration {
   }
 
   diagnostics() {
+    const mem = this.tracker.memory ? this.tracker.memory() : null;
     return {
+      memory: mem,
+      memoryPeak: this.memoryPeak,
+      memoryFreed: this.memoryFreed || null,
       framesSeen: this.framesSeen,
       facesSeen: this.facesSeen,
       faceRate: this.framesSeen ? this.facesSeen / this.framesSeen : 0,
@@ -176,7 +183,7 @@ export class Calibration {
 
       // --- calibration ---
       this._setPhase(PHASE.CALIBRATING);
-      const points = this.shuffle ? shuffled(CALIB_POINTS) : CALIB_POINTS.slice();
+      const points = this.shuffle ? shuffled(this.points) : this.points.slice();
       for (let i = 0; i < points.length; i++) {
         this.onPoint(i, points.length, points[i], 'calibration');
         await this._awaitTap();
@@ -192,8 +199,14 @@ export class Calibration {
           const retry = await this.tracker.calibratePoint(points[i][0], points[i][1]);
           if (retry && retry.accepted) this.accepted++;
         }
+        // Watch tensor count across calibration: a monotonic climb is the
+        // signature of the leak that kills the tab.
+        const mem = this.tracker.memory ? this.tracker.memory() : null;
+        if (mem && (!this.memoryPeak || mem.numTensors > this.memoryPeak.numTensors)) {
+          this.memoryPeak = { ...mem, afterPoint: this.accepted };
+        }
         this.onProgress({ accepted: this.accepted, total: points.length,
-                          rejected: this.rejected.length });
+                          rejected: this.rejected.length, memory: mem });
       }
 
       // --- validation: measured, never trained on ---
@@ -216,6 +229,12 @@ export class Calibration {
         });
         this.onProgress({ validated: this.validation.length,
                           total: VALIDATION_POINTS.length });
+      }
+
+      // Free the retained calibration tensors before anything else runs.
+      // This is the point the page crashed on a real iPhone.
+      if (this.tracker.releaseCalibrationMemory) {
+        this.memoryFreed = this.tracker.releaseCalibrationMemory();
       }
 
       this._setPhase(PHASE.DONE);
@@ -245,7 +264,7 @@ export class Calibration {
       meanError,
       worstError,
       pointsAccepted: this.accepted,
-      pointsTotal: CALIB_POINTS.length,
+      pointsTotal: this.points.length,
       pointsRejected: this.rejected,
       validation: this.validation,
       validationLost: VALIDATION_POINTS.length - errs.length,

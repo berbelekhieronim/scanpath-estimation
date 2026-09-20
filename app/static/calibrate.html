@@ -138,6 +138,48 @@ function participantUuid() {
 
 let tracker = null, calib = null, attempts = 0;
 
+/* Crash-resilient reporting.
+ *
+ * When the tab is killed mid-run — which is what "a problem repeatedly
+ * occurred" means on iOS — nothing gets posted and there is nothing to
+ * diagnose from. So progress is written to localStorage as it happens, and
+ * any unsent breadcrumb is posted on the next load. A crashed run then still
+ * tells us how far it got and what the tensor count was doing.
+ */
+const CRUMB_KEY = 'scanpath_calib_crumb';
+
+function crumb(stage, extra = {}) {
+  try {
+    localStorage.setItem(CRUMB_KEY, JSON.stringify({
+      stage, at: new Date().toISOString(),
+      attempts, ua: navigator.userAgent.slice(0, 120),
+      ...extra,
+    }));
+  } catch {}
+}
+
+async function flushCrumb() {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(CRUMB_KEY) || 'null'); } catch {}
+  if (!saved || saved.stage === 'done') { clearCrumb(); return; }
+  try {
+    await fetch('/api/gaze/session', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        participant_uuid: participantUuid(),
+        grade: 'failed',
+        failure: 'crashed_at_' + saved.stage,
+        tracker: 'webeyetrack',
+        device_label: saved.ua,
+        diagnostics: saved,
+      }),
+    });
+  } catch {}
+  clearCrumb();
+}
+
+function clearCrumb() { try { localStorage.removeItem(CRUMB_KEY); } catch {} }
+
 /* Immediate acknowledgement of a tap.
  *
  * There is up to a second between tapping and the next target appearing
@@ -191,11 +233,18 @@ async function begin() {
     }
   };
 
+  crumb('starting');
   try {
     await tracker.start();
-  } catch { return; }
+  } catch { crumb('start_failed'); return; }
+  crumb('camera_running');
 
+  // ?light=1 halves the calibration points. Fewer points means a weaker fit,
+  // but also far fewer retained eye-patch tensors — the fallback if memory
+  // turns out to be what kills the tab.
+  const light = params.get('light') === '1';
   calib = new Calibration(tracker, {
+    points: light ? CALIB_POINTS.filter((_, i) => i % 2 === 0) : undefined,
     onPhase: (phase) => {
       if (phase === PHASE.WAITING_FOR_FACE) {
         $('title').textContent = 'Looking for your face';
@@ -236,11 +285,14 @@ async function begin() {
     const chip = $('face-chip');
     if (!d.framesSeen) { chip.textContent = 'starting…'; chip.className = 'face-chip'; return; }
     const stale = d.msSinceFace == null || d.msSinceFace > 1500;
-    chip.textContent = stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`;
+    const mem = d.memory ? ` · ${d.memory.numTensors}t ${d.memory.mb}MB` : '';
+    chip.textContent = (stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`) + mem;
     chip.className = 'face-chip ' + (stale ? 'bad' : 'ok');
+    crumb('calibrating', d);
   }, 500);
 
   const result = await calib.run();
+  crumb('run_returned', result.diagnostics || {});
   $('target').classList.add('hidden');
   await report(result);
 }
@@ -271,15 +323,25 @@ async function report(result) {
       }),
     });
   } catch { /* the result still gets shown; storage is best-effort here */ }
+  crumb('done');
+  clearCrumb();
 
   const badge = `<span class="grade ${result.grade}">${result.grade}</span>`;
 
   clearInterval(window._faceTimer);
   const d = result.diagnostics || {};
+  const memBits = [];
+  if (d.memoryPeak) memBits.push(`peak ${d.memoryPeak.numTensors} tensors /
+    ${d.memoryPeak.mb}MB`);
+  if (d.memoryFreed && d.memoryFreed.before && d.memoryFreed.after) {
+    memBits.push(`freed ${d.memoryFreed.before.numTensors - d.memoryFreed.after.numTensors}
+      tensors`);
+  }
   const diagLine = d.framesSeen
     ? `<p style="font-size:.75rem;color:var(--muted)">Frames ${d.framesSeen},
        face found ${Math.round((d.faceRate || 0) * 100)}%, points accepted
-       ${result.pointsAccepted}/${result.pointsTotal}.</p>` : '';
+       ${result.pointsAccepted}/${result.pointsTotal}${
+         memBits.length ? ', ' + memBits.join(', ') : ''}.</p>` : '';
 
   if (result.failure === 'stalled' || result.failure === 'error') {
     overlay('Tracking stopped partway',
@@ -321,6 +383,7 @@ async function report(result) {
 
 $('ov-btn').onclick = begin;
 renderProgress(0, CALIB_POINTS.length, 'calibration');
+flushCrumb();   // report anything a previous crashed run left behind
 
 window.addEventListener('pagehide', () => tracker && tracker.stop());
 document.addEventListener('visibilitychange', () => {
