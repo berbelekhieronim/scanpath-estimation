@@ -326,6 +326,39 @@ the fallback.
 
 ---
 
+## 6b. Phones are less accurate than laptops, and that is geometry
+
+Expect measured gaze on a phone to be roughly **two and a half times less
+accurate than on a laptop**, as a fraction of the picture. It is not the
+camera, and it is not a bug.
+
+```bash
+python tools/device_report.py
+```
+
+Prints the calibration error your own sessions recorded, split by device, plus
+the geometry that explains it. In short: the tracker's error is **angular** —
+it guesses a direction, and the library returns a point normalised to the
+screen with no physical size anywhere in it, so all device geometry is
+absorbed by the nine-point calibration. A 4:3 picture on a 13" laptop at 55cm
+subtends about 25°; the same picture on an iPhone 12 mini at 30cm subtends
+about 11°. The same angular error therefore covers about 22% of the phone
+picture and about 10% of the laptop one.
+
+The phone camera is not the limit: at 30cm the face fills *more* of the frame
+than at 55cm on a laptop, so the eyes are sampled by more pixels, not fewer.
+
+What follows from it:
+
+- **Do not present a grid finer than 3 × 3.** This is the same constraint as
+  before, and this is where it comes from.
+- Landscape helps a little — the picture fills more of the screen, about 17%
+  error instead of 22% — but it is not a fix.
+- If some participants can use laptops, their gaze data is materially better.
+  Worth knowing when reading a thin measured group.
+
+---
+
 ## 7. After the session — do not skip
 
 ```bash

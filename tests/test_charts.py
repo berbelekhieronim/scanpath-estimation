@@ -10,6 +10,7 @@ person (SPEC-METRICS.md section 1).
 import importlib
 import re
 import tempfile
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -410,3 +411,27 @@ def test_grids_take_the_pictures_shape():
     module = (STATIC / "charts.js").read_text()
     assert "o.aspect" in module
     assert "H = Math.round(300 / (o.aspect || 1))" in module
+
+
+# --- device breakdown -----------------------------------------------------
+
+def test_device_classes_split_phones_from_laptops():
+    """The split that matters is a screen at arm's length against one on a
+    desk, because tracking error is angular and the phone's picture fills far
+    less of the eye's field."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import device_report
+
+    iphone = {"ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)",
+              "touch_points": 5, "screen_w": 375}
+    mac = {"ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+           "touch_points": 0, "screen_w": 1470}
+    ipad = {"ua": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X)",
+            "touch_points": 5, "screen_w": 1024}
+
+    assert device_report.device_class(iphone, 375, 700) == "phone"
+    assert device_report.device_class(mac, 1440, 820) == "desktop/laptop"
+    assert device_report.device_class(ipad, 1024, 768) == "tablet"
+    # A session recorded before device capture existed must not be silently
+    # counted as a laptop.
+    assert device_report.device_class({}, None, None) == "unknown"
