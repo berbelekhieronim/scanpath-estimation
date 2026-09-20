@@ -687,3 +687,31 @@ def test_one_wild_sample_never_rescales_the_real_data():
     r = run_fit("(t) => (t[0] < 0.4 && t[1] < 0.4) ? [0.95, 0.02] : [t[0], t[1]]")
     assert r["gainUsed"] is False
     assert r["gain"] == [1, 1]
+
+
+# --- navigation -----------------------------------------------------------
+
+def test_operator_pages_share_one_navigation_bar():
+    """Every page used to carry its own handful of links — Controls four,
+    Charts two, Images none — so moving between them meant knowing the URLs.
+    Presenting is the wrong moment to be remembering paths."""
+    for name in ("control.html", "charts.html", "admin.html", "start.html"):
+        page = (STATIC / name).read_text()
+        assert 'id="nav"' in page, name
+        assert "renderNav(" in page, name
+
+
+def test_projected_and_participant_pages_have_no_navigation():
+    """A nav bar on the projected screen is a distraction; on a participant's
+    phone it is an invitation to wander off mid-study."""
+    for name in ("display.html", "qr.html", "index.html", "consent.html",
+                 "calibrate.html", "view.html"):
+        page = (STATIC / name).read_text()
+        assert "renderNav" not in page, name
+
+
+def test_navigation_carries_the_control_token():
+    """Otherwise every hop to a locked page asks for it again."""
+    js = (STATIC / "nav.js").read_text()
+    assert "scanpath_control_token" in js
+    assert "token: true" in js

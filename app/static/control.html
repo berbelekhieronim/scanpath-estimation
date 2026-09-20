@@ -50,16 +50,12 @@
 <body>
 <div class="wrap">
 
+  <nav class="nav" id="nav"></nav>
+
   <header class="bar">
     <div>
       <h1>Presenter controls</h1>
       <div class="sub" id="subtitle">…</div>
-    </div>
-    <div class="links">
-      <a href="/display" target="_blank">Display &rarr;</a>
-      <a href="/qr" target="_blank">Join screen &rarr;</a>
-      <a href="/charts" target="_blank">Charts &rarr;</a>
-      <a href="/admin" target="_blank">Admin &rarr;</a>
     </div>
   </header>
 
@@ -86,8 +82,7 @@
       <h2>Layers</h2>
       <div class="toggles" id="toggles"></div>
       <div class="sub" style="margin-top:12px">
-        Hiding a layer never deletes anything. Responses stay in the database
-        and come back when you switch the layer on again.
+        Hiding a layer never deletes anything.
       </div>
     </div>
 
@@ -101,8 +96,7 @@
           <option value="model">Model — what it predicts</option>
         </select>
       </div>
-      <div class="sub">Switches which group the grid on the picture draws,
-        without turning anything off. Turn the grid on under
+      <div class="sub">Which group the grid draws. Turn the grid on under
         <em>On the picture</em>.</div>
     </div>
 
@@ -118,10 +112,8 @@
       </div>
       <div class="sub" id="condition-counts" style="margin-bottom:10px"></div>
       <div class="sub" style="margin-bottom:8px">
-        <strong>Assignment sticks to a device.</strong> One phone keeps the
-        same condition for the whole round, which is what stops a person doing
-        both. To re-roll a test phone, open
-        <code>/?newid=1</code> on it, or start a fresh round.
+        <strong>Assignment sticks to a device</strong>, which is what stops one
+        person doing both. To re-roll a test phone, open <code>/?newid=1</code>.
       </div>
       <div class="sub">
         Between-subjects: a participant does one or the other, never both.
@@ -143,8 +135,7 @@
         <button id="rescan-model">Reload runs from disk</button>
       </div>
       <div class="sub" style="margin-top:10px">
-        Runs are precomputed by <code>tools/precompute.py</code>. Switching task
-        shows the matching run if one exists.
+        Precomputed by <code>tools/precompute.py</code>.
       </div>
     </div>
 
@@ -152,8 +143,7 @@
       <h2>Image</h2>
       <select id="image-select"></select>
       <div class="sub" style="margin-top:10px">
-        Changing the image opens a new round. Participants' phones pick it up
-        within a few seconds.
+        Changing the image opens a new round; phones follow within seconds.
       </div>
     </div>
 
@@ -163,14 +153,17 @@
         <button id="reset" class="danger-btn">Start a fresh round</button>
       </div>
       <div class="sub" style="margin-top:10px">
-        Same image, empty slate — for running it with a second group. The
-        previous round's responses are kept and stay exportable.
+        Same image, empty slate. The previous round's responses are kept.
       </div>
     </div>
 
   </div>
 </div>
 
+<script type="module">
+import { renderNav } from '/static/nav.js';
+renderNav('/control');
+</script>
 <script>
 const $ = (id) => document.getElementById(id);
 const TOKEN_KEY = 'scanpath_control_token';

@@ -25,14 +25,12 @@
 <body>
 <div class="wrap">
 
+  <nav class="nav" id="nav"></nav>
+
   <header class="bar">
     <div>
       <h1>Tapped vs measured vs model</h1>
       <div class="sub" id="subtitle">Loading…</div>
-    </div>
-    <div class="links">
-      <a href="/display" target="_blank">Display &rarr;</a>
-      <a href="/start">Start page &rarr;</a>
     </div>
   </header>
 
@@ -90,6 +88,9 @@ import {
   SERIES, densityPanels, sequentialScale, differenceMap, dotPlot,
   agreementTable, numbersTable, legendRow, esc, MORE_IS,
 } from '/static/charts.js';
+import { renderNav } from '/static/nav.js';
+
+renderNav('/charts');
 
 const $ = (id) => document.getElementById(id);
 const put = (id, node) => {

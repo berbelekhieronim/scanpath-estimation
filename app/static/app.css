@@ -112,3 +112,22 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
   }
   button:hover:not(:disabled) { background: #e2e5ec; }
 }
+
+
+/* Operator navigation. Present on the pages someone runs the session from,
+   absent from the projected screens and from anything a participant sees. */
+.nav {
+  display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+  margin-bottom: 20px; padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.nav-item {
+  padding: 7px 13px; border-radius: 999px; text-decoration: none;
+  color: var(--muted); font-size: 0.875rem; line-height: 1;
+  border: 1px solid transparent; transition: color .12s, border-color .12s;
+}
+.nav-item:hover { color: var(--text); border-color: var(--border); }
+.nav-item.on {
+  color: var(--text); background: var(--surface-2);
+  border-color: var(--border); font-weight: 600;
+}

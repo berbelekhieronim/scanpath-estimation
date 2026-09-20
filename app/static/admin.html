@@ -9,6 +9,8 @@
 <body>
 <div class="wrap">
 
+  <nav class="nav" id="nav"></nav>
+
   <header class="bar">
     <div>
       <h1>Image management</h1>
@@ -36,6 +38,10 @@
 
 </div>
 
+<script type="module">
+import { renderNav } from '/static/nav.js';
+renderNav('/admin');
+</script>
 <script>
 const $ = (s) => document.querySelector(s);
 const TOKEN_KEY = 'scanpath_control_token';
