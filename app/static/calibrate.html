@@ -192,8 +192,9 @@ async function flushCrumb() {
   try { saved = JSON.parse(localStorage.getItem(CRUMB_KEY) || 'null'); } catch {}
   if (!saved || saved.stage === 'done') { clearCrumb(); return; }
   showLastRun(saved);
+  let sessionResponse = null;
   try {
-    await fetch('/api/gaze/session', {
+    sessionResponse = await fetch('/api/gaze/session', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         participant_uuid: participantUuid(),
@@ -345,8 +346,9 @@ async function report(result) {
   tracker.stop();
   const pct = result.meanError == null ? null : Math.round(result.meanError * 100);
 
+  let sessionResponse = null;
   try {
-    await fetch('/api/gaze/session', {
+    sessionResponse = await fetch('/api/gaze/session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -366,6 +368,11 @@ async function report(result) {
         diagnostics: result.diagnostics,
       }),
     });
+    const body = await sessionResponse.json();
+    // The viewing stage needs this id to attach its samples to.
+    if (body && body.session_id) {
+      localStorage.setItem('scanpath_gaze_session_id', String(body.session_id));
+    }
   } catch { /* the result still gets shown; storage is best-effort here */ }
   crumb('done');
   clearCrumb();
@@ -412,7 +419,7 @@ async function report(result) {
        across the checks.</p>${diagLine}
        <p style="font-size:.8125rem">That is the expected range for a phone
        camera. It is enough to tell broad regions apart, not fine detail.</p>`,
-      'Continue', () => { location.href = '/?calibrated=1'; });
+      'Continue', () => { location.href = '/view'; });
   } else {
     overlay('Tracking is not accurate enough',
       `${badge}<p>Typical error about <strong>${pct ?? '—'}%</strong> of the

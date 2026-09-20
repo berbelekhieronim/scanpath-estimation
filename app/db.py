@@ -101,6 +101,7 @@ def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
     init_gaze()
+    init_gaze_samples()
 
 
 # --------------------------------------------------------------------------
@@ -479,3 +480,78 @@ def gaze_session_stats(round_id: Optional[int]) -> dict:
             excluded += r["n"]
     return {"total": total, "usable": total - excluded, "excluded": excluded,
             "grades": grades}
+
+
+GAZE_SAMPLES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS gaze_samples (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES gaze_sessions(id),
+    t_ms       INTEGER NOT NULL,
+    x          REAL,          -- image-relative 0..1, NULL when off the image
+    y          REAL,
+    on_image   INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_gaze_samples_session ON gaze_samples(session_id);
+"""
+
+
+def init_gaze_samples() -> None:
+    with connect() as conn:
+        conn.executescript(GAZE_SAMPLES_SCHEMA)
+
+
+def save_gaze_samples(session_id: int, samples: list) -> int:
+    """Store one viewing window's samples.
+
+    Replaces any previous set for the session, so a retried view does not
+    accumulate two overlapping recordings.
+    """
+    with connect() as conn:
+        conn.execute("DELETE FROM gaze_samples WHERE session_id = ?", (session_id,))
+        conn.executemany(
+            "INSERT INTO gaze_samples (session_id, t_ms, x, y, on_image) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(session_id, int(s.get("t", 0)), s.get("x"), s.get("y"),
+              1 if s.get("on_image", True) else 0) for s in samples],
+        )
+    return len(samples)
+
+
+def get_gaze_session(session_id: int) -> Optional[dict]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM gaze_sessions WHERE id = ?",
+                           (session_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
+    """Pooled on-image gaze for a round, plus per-session paths.
+
+    Excluded sessions are left out by default but still counted, because the
+    exclusion rate is part of what gets reported (spec 5.1).
+    """
+    sql = ("SELECT s.session_id, s.t_ms, s.x, s.y FROM gaze_samples s "
+           "JOIN gaze_sessions g ON g.id = s.session_id "
+           "WHERE g.round_id = ? AND s.on_image = 1")
+    if not include_excluded:
+        sql += " AND g.excluded = 0"
+    sql += " ORDER BY s.session_id, s.t_ms"
+
+    with connect() as conn:
+        rows = [dict(r) for r in conn.execute(sql, (round_id,))]
+        counts = conn.execute(
+            "SELECT COUNT(DISTINCT id) AS sessions, "
+            "SUM(CASE WHEN excluded = 1 THEN 1 ELSE 0 END) AS excluded "
+            "FROM gaze_sessions WHERE round_id = ?", (round_id,)).fetchone()
+
+    paths: dict = {}
+    for r in rows:
+        paths.setdefault(r["session_id"], []).append([r["x"], r["y"]])
+    ordered = list(paths.values())
+    return {
+        "paths": ordered,
+        "points": [p for path in ordered for p in path],
+        "contributors": len(ordered),
+        "sessions": counts["sessions"] or 0,
+        "excluded": counts["excluded"] or 0,
+    }

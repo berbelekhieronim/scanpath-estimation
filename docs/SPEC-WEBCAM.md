@@ -321,7 +321,7 @@ tap route, so Stage 1 stays as light as it is now.
 |---|---|---|
 | **W1** | Tracker adapter interface + WebEyeTrack behind it; a bare test page showing a live gaze dot | **Gate MET on a real phone, 2026-09-20** — dot tracks, face-found and FPS both above threshold, all dependencies reachable |
 | **W2** | Consent screen, 9-point calibration, validation scoring, quality gate | **Built, see §13.** Verified end to end against the mock backend; untested against a real eye |
-| **W3** | Stage 3 viewing, sampling, batch upload, session storage | Gaze data lands in the database with a quality score |
+| **W3** | Stage 3 viewing, sampling, batch upload, session storage | **Built, see §14.** Calibrate to view to upload runs end to end |
 | **W4** | Coarse-grid analysis, measured-gaze display layer, exclusion reporting | The room's measured heatmap appears on the projector |
 | **W5** | Three-way comparison (tapped / measured / model) and the per-participant two-panel result | The headline claim |
 
@@ -658,8 +658,8 @@ tab for it.
 **9 of 9 points accepted**, so the debounce and proximity handling around
 `handleClick()` is working and nothing was silently dropped.
 
-**Grade *usable* is the first real accuracy measurement this project has.** It
-puts mean validation error between 0.18 and 0.30 of viewport width, which
+**Grade *usable* is the first real accuracy measurement this project has.**
+Reported error was **21–23%** of viewport width, which
 lands squarely where §2.2 predicted from the literature: roughly three
 resolvable columns across a phone screen. The coarse-grid analysis in §6 is
 the right design, and the mean-shift AOIs would have been fantasy.
@@ -705,3 +705,61 @@ offered a retry.
 **Untested against a real eye.** No camera here. In particular the real
 tracker's post-calibration accuracy — the number the whole gate depends on —
 is unknown until someone runs `/consent` on a phone.
+
+---
+
+## 14. W3 as built
+
+`/view`: the image alone, a five-second window, gaze sampled throughout, then
+a single batch upload.
+
+### 14.1 Five seconds, not three
+
+The model's own prompt says *"free viewing for 3 seconds"*, and matching it
+would have been tidy. But the CPU backend runs near 4 Hz, so three seconds
+yields about eleven samples. Five gets to roughly eighteen — still thin, but
+enough for a coarse grid.
+
+**This mismatch is real and should be stated when presenting**: the humans
+looked for five seconds, the model was asked about three. It is the honest
+trade against a sample count too small to mean anything.
+
+### 14.2 Off-image gaze is recorded as off-image
+
+The picture does not fill the phone screen, so gaze legitimately lands on the
+letterboxing or off the device. Those samples are stored with null coordinates
+and an `on_image` flag rather than clamped to the nearest border. Clamping
+would have invented a pile of fixations along the edges that nobody made, and
+at 21–23% error the borders are exactly where spurious points would collect.
+
+The participant sees the count — *"91 samples, 66 off the picture"* — which is
+also a useful signal that their calibration has drifted.
+
+### 14.3 No fixation detection
+
+§9 proposed a `gaze_fixations` table. At 4 Hz that is not defensible: fixations
+and saccades cannot be separated when samples are 250 ms apart. W3 stores raw
+samples only and the analysis treats them spatially. The table is dropped until
+there is a frame rate that justifies it.
+
+### 14.4 The handoff, which was the "odd page"
+
+Calibration used to end by sending the participant to `/?calibrated=1` — the
+tap page, which knew nothing about the calibration that had just happened and
+asked them to start tapping. There was nowhere better to go, because the
+viewing stage did not exist. It now goes to `/view`, carrying the gaze session
+id so the samples attach to the right calibration.
+
+### 14.5 Verified
+
+Driven end to end in a browser against the mock backend: calibration stores a
+session id and hands off to `/view`; the viewing window records and uploads;
+the aggregate groups by participant; excluded sessions are kept out of the
+pooled data but still counted; re-uploading replaces rather than doubles; an
+uncalibrated device is sent to calibrate rather than failing; and gaze directed
+above the picture is recorded as 66 off-image samples with none pinned to the
+top edge.
+
+**Untested on a real device.** In particular the actual sample count from a
+five-second window at the real frame rate — the number that decides whether
+the coarse grid has enough data per participant.

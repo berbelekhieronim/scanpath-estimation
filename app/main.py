@@ -165,6 +165,11 @@ def page_calibrate():
     return _page("calibrate.html")
 
 
+@app.get("/view", include_in_schema=False)
+def page_view():
+    return _page("view.html")
+
+
 @app.get("/gazetest", include_in_schema=False)
 def page_gazetest():
     """Phase W1 diagnostic: does webcam gaze tracking work on this device?"""
@@ -493,6 +498,57 @@ def api_gaze_session(session: GazeSession, request: Request):
         "usable": session.grade in ("good", "usable"),
         "stats": db.gaze_session_stats(round_["id"] if round_ else None),
     }
+
+
+class GazeSamples(BaseModel):
+    session_id: int
+    samples: list[dict] = Field(max_length=2000)
+    duration_ms: Optional[int] = None
+    blinks: Optional[int] = None
+    off_image: Optional[int] = None
+
+    @field_validator("samples")
+    @classmethod
+    def coordinates_in_range(cls, v):
+        for s in v:
+            x, y = s.get("x"), s.get("y")
+            if x is None or y is None:
+                continue          # off-image samples carry no coordinates
+            if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+                raise ValueError("coordinates must be normalised to 0.0-1.0")
+        return v
+
+
+@app.post("/api/gaze/samples")
+def api_gaze_samples(payload: GazeSamples):
+    """Store one viewing window, uploaded as a batch at the end.
+
+    Batched rather than streamed on purpose: a dropped connection mid-stream
+    would lose a partial recording and leave no way to tell a short window
+    from a truncated one.
+    """
+    sess = db.get_gaze_session(payload.session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Unknown gaze session")
+
+    n = db.save_gaze_samples(payload.session_id, payload.samples)
+    round_ = db.get_active_round()
+    return {
+        "saved": n,
+        "session_id": payload.session_id,
+        "excluded": bool(sess["excluded"]),
+        "stats": db.gaze_session_stats(round_["id"] if round_ else None),
+    }
+
+
+@app.get("/api/gaze/aggregate")
+def api_gaze_aggregate():
+    """Pooled measured gaze for the current round, for the display."""
+    round_ = db.get_active_round()
+    if not round_:
+        return {"paths": [], "points": [], "contributors": 0,
+                "sessions": 0, "excluded": 0}
+    return db.round_gaze_points(round_["id"])
 
 
 @app.get("/api/gaze/stats")

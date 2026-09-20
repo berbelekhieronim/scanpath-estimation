@@ -113,6 +113,8 @@ const PAGES = [
     desc: 'Rescan the images folder and choose which image is active.' },
   { path: '/consent', name: 'Camera consent + calibration', who: 'Phone',
     desc: 'Phase W2 — opt in, then a 9-point calibration with 4 validation checks and a pass/fail quality grade. Add ?mock=1 to /calibrate to try it without a camera.' },
+  { path: '/view', name: 'Viewing stage', who: 'Phone',
+    desc: 'Phase W3 — look at the image for five seconds while gaze is recorded. Needs a calibration first. Add ?mock=1 to try without a camera.' },
   { path: '/gazetest', name: 'Gaze tracking test', who: 'Phone',
     desc: 'Phase W1 diagnostic — does webcam eye tracking work on this device and this network? Camera only starts when you press start.' },
 ];

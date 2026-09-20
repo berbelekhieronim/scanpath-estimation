@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Just look — where do you look?</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; background: #000; }
+  .view { position: fixed; inset: 0; display: grid; place-items: center;
+          touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+
+  .frame { position: relative; max-width: 100%; max-height: 100%; overflow: hidden; }
+  .frame img { display: block; width: 100%; height: 100%; object-fit: fill; }
+
+  /* A thin ring, not a number: a counting digit is something to look at, and
+     this stage must not give the eye a target other than the picture. */
+  .ring { position: absolute; top: calc(10px + env(safe-area-inset-top));
+          left: 50%; transform: translateX(-50%); z-index: 3; }
+  .ring svg { display: block; }
+  .ring circle { fill: none; stroke-width: 3; }
+  .ring .bg { stroke: rgba(255,255,255,.22); }
+  .ring .fg { stroke: #fff; stroke-linecap: round;
+              transform: rotate(-90deg); transform-origin: 50% 50%; }
+
+  .overlay { position: fixed; inset: 0; z-index: 5; display: grid; place-items: center;
+             text-align: center; padding: 26px; background: var(--bg); }
+  .overlay.hidden { display: none; }
+  .overlay h2 { margin: 0 0 10px; font-size: 1.375rem; }
+  .overlay p { margin: 0 0 8px; color: var(--muted); max-width: 400px; }
+  .overlay .big { font-size: 3rem; line-height: 1; margin-bottom: 14px; }
+  .overlay button { margin-top: 18px; padding: 14px 26px; font-size: 1rem; }
+
+  .chip { position: fixed; z-index: 4; left: 8px;
+          top: calc(8px + env(safe-area-inset-top));
+          font-size: 0.6875rem; padding: 4px 9px; border-radius: 999px;
+          background: rgba(0,0,0,.55); color: #fff; }
+  video { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 8px;
+          width: 58px; height: 44px; object-fit: cover; border-radius: 6px;
+          transform: scaleX(-1); background: #000; z-index: 4; opacity: .75; }
+</style>
+</head>
+<body>
+<div class="view" id="view">
+  <video id="cam" autoplay playsinline muted></video>
+  <div class="chip" id="chip" hidden></div>
+
+  <div class="frame" id="frame" hidden>
+    <img id="photo" alt="">
+    <div class="ring" id="ring" hidden>
+      <svg width="34" height="34" viewBox="0 0 34 34">
+        <circle class="bg" cx="17" cy="17" r="14"></circle>
+        <circle class="fg" id="ring-fg" cx="17" cy="17" r="14"></circle>
+      </svg>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div>
+      <h2 id="ov-title">Now just look</h2>
+      <p id="ov-body">
+        The picture will appear for a few seconds. <strong>Don't tap anything
+        — just look at it naturally</strong>, the way you would a photo.
+      </p>
+      <p style="font-size:.8125rem">Keep the phone where it was for the
+        calibration.</p>
+      <button class="primary" id="ov-btn">I'm ready</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { createTracker, STATUS } from '/static/gaze/tracker.js';
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const USE_MOCK = params.get('mock') === '1';
+const SESSION_KEY = 'scanpath_gaze_session_id';
+const UUID_KEY = 'scanpath_participant_uuid';
+
+/* Five seconds, not the three the model's prompt describes.
+ *
+ * On the CPU backend the tracker runs near 4 Hz, so three seconds would yield
+ * about eleven samples. Five gets it to roughly eighteen, which is thin but
+ * workable for a coarse grid. The mismatch with the model's "free viewing for
+ * 3 seconds" is a real one and is recorded in the spec rather than hidden. */
+const VIEW_MS = Number(params.get('ms')) || 5000;
+
+let tracker = null, state = null, samples = [], blinks = 0, offImage = 0;
+
+function sessionId() {
+  const v = Number(localStorage.getItem(SESSION_KEY));
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+function overlay(title, bodyHtml, btnLabel, onClick) {
+  $('ov-title').textContent = title;
+  $('ov-body').innerHTML = bodyHtml;
+  const btn = $('ov-btn');
+  btn.textContent = btnLabel || '';
+  btn.style.display = btnLabel ? '' : 'none';
+  btn.onclick = onClick || null;
+  $('overlay').classList.remove('hidden');
+}
+
+/* Viewport gaze to image-relative gaze.
+ *
+ * The picture does not fill the screen, so a sample can legitimately land
+ * outside it — on the letterboxing, or off the phone entirely. Those are
+ * recorded as off-image rather than clamped to the border: clamping would
+ * invent a pile of fixations along the edges that nobody made. */
+function toImageCoords(s) {
+  const r = $('frame').getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const x = (s.x * window.innerWidth - r.left) / r.width;
+  const y = (s.y * window.innerHeight - r.top) / r.height;
+  const on = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+  return { t: Math.round(s.t), x: on ? +x.toFixed(4) : null,
+           y: on ? +y.toFixed(4) : null, on_image: on };
+}
+
+async function loadState() {
+  state = await fetch('/api/state').then((r) => r.json());
+  if (!state.image) {
+    overlay('Nothing to look at yet',
+      '<p>The presenter has not chosen an image.</p>', null);
+    return false;
+  }
+  const frame = $('frame');
+  frame.style.aspectRatio = `${state.image.width} / ${state.image.height}`;
+  $('photo').src = '/img/' + encodeURIComponent(state.image.filename);
+  await new Promise((res) => {
+    if ($('photo').complete) return res();
+    $('photo').onload = res; $('photo').onerror = res;
+  });
+  return true;
+}
+
+async function begin() {
+  $('overlay').classList.add('hidden');
+  if (!await loadState()) return;
+
+  tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'),
+                          { backend: params.get('backend') || 'auto' });
+  tracker.onStatus = (status, err) => {
+    if (status === STATUS.ERROR) {
+      overlay('The camera could not start', `<p>${err || ''}</p>`,
+              'Skip this', finishWithout);
+    }
+  };
+  tracker.onSample = (s) => {
+    if (!s.ok || s.x == null) return;
+    if (s.state === 'closed') { blinks++; return; }
+    const mapped = toImageCoords(s);
+    if (!mapped) return;
+    if (!mapped.on_image) offImage++;
+    samples.push(mapped);
+  };
+
+  try { await tracker.start(); } catch { return; }
+
+  $('frame').hidden = false;
+  $('chip').hidden = false;
+  $('ring').hidden = false;
+
+  const C = 2 * Math.PI * 14;
+  $('ring-fg').style.strokeDasharray = `${C}`;
+  const t0 = performance.now();
+  await new Promise((resolve) => {
+    const tick = () => {
+      const p = Math.min(1, (performance.now() - t0) / VIEW_MS);
+      $('ring-fg').style.strokeDashoffset = `${C * p}`;
+      $('chip').textContent = `${samples.length} samples`;
+      if (p >= 1) return resolve();
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+
+  tracker.stop();
+  $('ring').hidden = true;
+  await upload(performance.now() - t0);
+}
+
+async function upload(durationMs) {
+  const id = sessionId();
+  const onImage = samples.filter((s) => s.on_image).length;
+
+  if (!id) {
+    overlay('Not calibrated yet',
+      '<p>This device has no calibration on record. Run the calibration first.</p>',
+      'Calibrate', () => { location.href = '/consent'; });
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/gaze/samples', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id, samples,
+                             duration_ms: Math.round(durationMs),
+                             blinks, off_image: offImage }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+  } catch {
+    overlay('Could not send your data',
+      '<p>Your looking was recorded but could not be uploaded.</p>',
+      'Try again', () => upload(durationMs));
+    return;
+  }
+
+  const rate = durationMs ? (samples.length / (durationMs / 1000)).toFixed(1) : '—';
+  overlay('Thank you',
+    `<div class="big">✓</div>
+     <p>Recorded where you actually looked — ${onImage} points on the picture.</p>
+     <p style="font-size:.75rem">${samples.length} samples at ${rate}/s${
+       blinks ? `, ${blinks} blinks` : ''}${
+       offImage ? `, ${offImage} off the picture` : ''}.</p>
+     <p>Look up at the screen.</p>`, null);
+}
+
+function finishWithout() {
+  location.href = '/?nocamera=1';
+}
+
+$('ov-btn').onclick = begin;
+window.addEventListener('pagehide', () => tracker && tracker.destroy());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && tracker) tracker.stop();
+});
+</script>
+</body>
+</html>
