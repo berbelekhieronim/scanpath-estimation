@@ -76,7 +76,7 @@
                transform: rotate(-90deg); transform-origin: 50% 50%; }
 
   video { position: absolute; top: calc(8px + env(safe-area-inset-top)); right: 8px;
-          width: 74px; height: 56px; object-fit: cover; border-radius: 7px;
+          width: 104px; height: 78px; object-fit: cover; border-radius: 7px;
           border: 1px solid var(--border); transform: scaleX(-1);
           background: #000; z-index: 3; pointer-events: none; }
 
@@ -107,7 +107,7 @@
 
   <div class="banner" id="banner">
     <h1 id="title">Setting up</h1>
-    <p id="hint">Rest the phone on the desk and keep it there.</p>
+    <p id="hint">Keep your eyes visible in the preview.</p>
   </div>
 
   <div class="face-chip" id="face-chip">starting…</div>
@@ -115,10 +115,6 @@
   <div class="stage-view hidden" id="stage-view">
     <div class="vframe" id="vframe">
       <img id="vphoto" alt="">
-      <svg class="vring" id="vring" width="34" height="34" viewBox="0 0 34 34">
-        <circle class="bg" cx="17" cy="17" r="14"></circle>
-        <circle class="fg" id="vring-fg" cx="17" cy="17" r="14"></circle>
-      </svg>
     </div>
   </div>
   <div class="target hidden" id="target"><div class="pulse"></div></div>
@@ -127,14 +123,16 @@
   <div class="overlay" id="overlay">
     <div>
       <h2 id="ov-title">Let's measure where you look</h2>
-      <p id="ov-body">
-        <strong>Rest your phone on the desk</strong> — propped or flat, just not
-        in your hand. It works noticeably better, and it is quicker.
-      </p>
-      <p>A dot will move around the screen. <strong>Look straight at it, then
-        tap it.</strong> Twelve times, about a minute.</p>
-      <p style="font-size:.8125rem">Whatever position you choose, keep it the
-        same until the end.</p>
+      <!-- Everything the overlay shows lives inside #ov-body. Sibling
+           paragraphs here would never be replaced and would leak onto every
+           later screen, including the thank-you. -->
+      <div id="ov-body">
+        <p><strong>Check your eyes are visible</strong> in the small camera
+           preview, top right. That matters more than anything else.</p>
+        <p>Hold the phone steady, or rest it on the desk — either is fine,
+           just keep it in the same place throughout.</p>
+        <p>A dot will move around the screen. Look straight at it, then tap it.</p>
+      </div>
       <button class="primary" id="ov-btn">Start</button>
       <div id="last-run" style="margin-top:18px;font-size:.75rem;color:var(--muted);
            max-width:400px;text-align:left"></div>
@@ -309,10 +307,10 @@ async function begin() {
     onPhase: (phase) => {
       if (phase === PHASE.WAITING_FOR_FACE) {
         $('title').textContent = 'Looking for your face';
-        $('hint').textContent = 'Point the camera at your face, with some light on it.';
+        $('hint').textContent = 'Make sure your eyes are visible in the preview, top right.';
       } else if (phase === PHASE.CALIBRATING) {
         $('title').textContent = 'Look at the dot, then tap it';
-        $('hint').textContent = 'Nine of these. Do not move the phone.';
+        $('hint').textContent = 'Nine of these. Keep the phone where it is.';
       } else if (phase === PHASE.VALIDATING) {
         $('title').textContent = 'Checking the result';
         $('hint').textContent = 'Three checks — look at it a moment, then tap.';
@@ -496,6 +494,8 @@ async function runViewingStage() {
   $('overlay').classList.add('hidden');
   $('banner').style.display = 'none';
   $('progress').style.display = 'none';
+  $('face-chip').style.display = 'none';
+  $('cam').style.display = 'none';
   clearInterval(window._faceTimer);
   crumb('viewing');
 
@@ -503,8 +503,7 @@ async function runViewingStage() {
   try { state = await fetch('/api/state').then((r) => r.json()); } catch { state = null; }
   if (!state || !state.image) {
     overlay('Nothing to look at yet',
-      '<p>The presenter has not chosen an image.</p>', 'Done',
-      () => { location.href = '/?viewed=1'; });
+      '<p>The presenter has not chosen an image.</p>', null);
     return;
   }
 
@@ -527,18 +526,11 @@ async function runViewingStage() {
     samples.push(m);
   };
 
-  const C = 2 * Math.PI * 14;
-  $('vring-fg').style.strokeDasharray = `${C}`;
+  // Nothing on screen but the picture. A countdown ring is itself something
+  // to look at, and this is the one stage where the eye must have no target
+  // other than the image.
   const t0 = performance.now();
-  await new Promise((resolve) => {
-    const tick = () => {
-      const pr = Math.min(1, (performance.now() - t0) / VIEW_MS);
-      $('vring-fg').style.strokeDashoffset = `${C * pr}`;
-      if (pr >= 1) return resolve();
-      requestAnimationFrame(tick);
-    };
-    tick();
-  });
+  await new Promise((resolve) => setTimeout(resolve, VIEW_MS));
   const durationMs = performance.now() - t0;
 
   tracker.stop();
@@ -556,8 +548,7 @@ async function uploadSamples(samples, durationMs, blinks, offImage) {
 
   if (!id) {
     overlay('Recorded, but not saved',
-      `<p>This device has no calibration on record.</p>${detail}`,
-      'Done', () => { location.href = '/?viewed=1'; });
+      `<p>This device has no calibration on record.</p>${detail}`, null);
     return;
   }
   try {
@@ -574,11 +565,11 @@ async function uploadSamples(samples, durationMs, blinks, offImage) {
     return;
   }
   crumb('done'); clearCrumb();
+  // No button and no navigation. Leaving the page would land the participant
+  // back on the tap screen, which is the wrong condition for them and is
+  // where the stray Submit and Undo controls came from.
   overlay('Thank you',
-    `<div class="big">✓</div>
-     <p>Recorded where you actually looked — ${onImage} points on the picture.</p>
-     ${detail}<p>Look up at the screen.</p>`,
-    'Done', () => { location.href = '/?viewed=1'; });
+    `<div class="big">✓</div><p>All done — look up at the screen.</p>`, null);
 }
 
 $('ov-btn').onclick = begin;

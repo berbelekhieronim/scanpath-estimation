@@ -7,59 +7,58 @@
 <title>Start — scanpath-estimation</title>
 <link rel="stylesheet" href="/static/app.css">
 <style>
-  .hero { margin-bottom: 26px; }
-  .hero h1 { margin: 0 0 6px; font-size: 1.5rem; }
+  .hero { margin-bottom: 20px; }
+  .hero h1 { margin: 0 0 4px; font-size: 1.5rem; }
   .hero .sub { color: var(--muted); }
 
-  .status-strip {
-    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 22px;
+  /* Readiness first: the states that ruin a session are the ones you want to
+     see before it starts, not discover during it. */
+  .ready {
+    display: grid; gap: 10px; margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   }
-  .chip {
-    display: inline-flex; align-items: baseline; gap: 7px;
+  .rcard {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 999px; padding: 7px 15px; font-size: 0.875rem;
+    border-left-width: 3px; border-radius: var(--radius); padding: 11px 14px;
   }
-  .chip b { font-variant-numeric: tabular-nums; font-size: 1rem; }
-  .chip.good { border-color: var(--ok); }
-  .chip.bad { border-color: var(--danger); }
+  .rcard.ok { border-left-color: var(--ok); }
+  .rcard.warn { border-left-color: var(--warn); }
+  .rcard.bad { border-left-color: var(--danger); }
+  .rcard .l { color: var(--muted); font-size: 0.6875rem;
+              text-transform: uppercase; letter-spacing: .05em; }
+  .rcard .v { font-size: 1.125rem; font-weight: 700; line-height: 1.25;
+              font-variant-numeric: tabular-nums; }
+  .rcard .n { color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
 
-  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
-  .page-card {
-    display: flex; flex-direction: column; gap: 9px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 17px 19px;
-    text-decoration: none; color: inherit;
-    transition: border-color .12s, transform .12s;
-  }
-  .page-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-  .page-card .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .page-card .name { font-size: 1.0625rem; font-weight: 600; }
-  .page-card .who {
-    font-size: 0.6875rem; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--muted); border: 1px solid var(--border);
-    border-radius: 4px; padding: 2px 7px; white-space: nowrap;
-  }
-  .page-card .desc { color: var(--muted); font-size: 0.875rem; line-height: 1.45; }
-  .page-card .path {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.8125rem; color: var(--accent);
-  }
-  .page-card.locked { opacity: .6; }
-  .page-card.locked .path { color: var(--warn); }
-
-  .warn-list { display: grid; gap: 10px; margin-bottom: 22px; }
   .warn-item {
-    border-radius: var(--radius); padding: 12px 16px; font-size: 0.9375rem;
-    border: 1px solid var(--border); background: var(--surface);
+    border-radius: var(--radius); padding: 11px 15px; font-size: 0.9375rem;
+    border: 1px solid var(--border); background: var(--surface); margin-bottom: 9px;
   }
   .warn-item.error { border-color: var(--danger); }
   .warn-item.warn { border-color: var(--warn); }
 
-  .token-box { margin-bottom: 22px; }
-  .join-line {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.875rem; word-break: break-all;
+  h2.sec { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .07em;
+           color: var(--muted); margin: 26px 0 10px; }
+
+  .links { display: grid; gap: 9px;
+           grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .link {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 13px 16px;
+    text-decoration: none; color: inherit; transition: border-color .12s;
   }
+  .link:hover { border-color: var(--accent); }
+  .link .nm { font-weight: 600; }
+  .link .ds { color: var(--muted); font-size: 0.8125rem; margin-top: 2px; }
+  .link .pth { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               font-size: 0.75rem; color: var(--accent); white-space: nowrap; }
+  .link.locked { opacity: .55; }
+  .link.locked .pth { color: var(--warn); }
+
+  .join { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 0.875rem; word-break: break-all; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; }
 </style>
 </head>
 <body>
@@ -67,30 +66,38 @@
 
   <div class="hero">
     <h1>scanpath-estimation</h1>
-    <div class="sub">Everything running on this server. One process, several pages.</div>
+    <div class="sub">One server. These are its pages.</div>
   </div>
 
-  <div class="status-strip" id="status"></div>
-  <div class="warn-list" id="warnings"></div>
+  <div class="ready" id="ready"></div>
+  <div id="warnings"></div>
 
-  <div class="card token-box" id="token-box">
-    <div style="margin-bottom:10px" id="token-msg">
-      Paste the control token to unlock the presenter pages. It is printed in
-      the server console at startup.
-    </div>
+  <div class="card" id="token-box">
+    <div style="margin-bottom:9px" id="token-msg"></div>
     <div class="row">
       <input type="password" id="token" placeholder="Control token" autocomplete="off">
       <button class="primary" id="save">Unlock</button>
-      <button id="forget" style="display:none">Forget token</button>
+      <button id="forget" style="display:none">Forget</button>
     </div>
   </div>
 
-  <div class="cards" id="cards"></div>
+  <h2 class="sec">Run the session</h2>
+  <div class="links" id="main-links"></div>
 
-  <div class="card" style="margin-top:22px">
-    <div class="sub" style="margin-bottom:6px">Join address for participants</div>
-    <div class="join-line" id="join">…</div>
-  </div>
+  <h2 class="sec">Participants see</h2>
+  <div class="links" id="participant-links"></div>
+
+  <h2 class="sec">Data</h2>
+  <div class="links" id="data-links"></div>
+
+  <h2 class="sec">Diagnostics</h2>
+  <details>
+    <summary>Tools for checking the setup</summary>
+    <div class="links" id="diag-links" style="margin-top:10px"></div>
+  </details>
+
+  <h2 class="sec">Join address</h2>
+  <div class="card"><div class="join" id="join">…</div></div>
 
 </div>
 
@@ -100,96 +107,108 @@ const TOKEN_KEY = 'scanpath_control_token';
 let token = localStorage.getItem(TOKEN_KEY) ||
             new URLSearchParams(location.search).get('k') || '';
 
-const PAGES = [
-  { path: '/', name: 'Participant view', who: 'Phones',
-    desc: 'What people land on when they scan the QR. Tap five places in order, then submit.' },
-  { path: '/qr', name: 'Join screen', who: 'Projector',
-    desc: 'Full-screen QR code plus the join address. Show this while people are arriving.' },
-  { path: '/display', name: 'Presenter display', who: 'Projector',
-    desc: 'The heatmap, individual paths, model scanpath and agreement metrics. This is the screen the audience watches.' },
-  { path: '/control', name: 'Controls', who: 'Your laptop', locked: true,
-    desc: 'Turn layers on and off, switch image, configure and reload the model, start a fresh round.' },
-  { path: '/admin', name: 'Admin', who: 'Your laptop', locked: true,
-    desc: 'Rescan the images folder and choose which image is active.' },
-  { path: '/consent', name: 'Camera consent + calibration', who: 'Phone',
-    desc: 'Phase W2 — opt in, then a 9-point calibration with 4 validation checks and a pass/fail quality grade. Add ?mock=1 to /calibrate to try it without a camera.' },
-  { path: '/view', name: 'Viewing stage', who: 'Phone',
-    desc: 'Phase W3 — look at the image for five seconds while gaze is recorded. Needs a calibration first. Add ?mock=1 to try without a camera.' },
-  { path: '/gazetest', name: 'Gaze tracking test', who: 'Phone',
-    desc: 'Phase W1 diagnostic — does webcam eye tracking work on this device and this network? Camera only starts when you press start.' },
-];
+/* Grouped by what you are doing, not by what exists. The presenter needs two
+   pages during a session; everything else is setup or diagnosis, and burying
+   those is the point of the grouping. */
+const GROUPS = {
+  'main-links': [
+    { path: '/control', nm: 'Controls', ds: 'Layers, capture mode, image, model', locked: true },
+    { path: '/display', nm: 'Display', ds: 'The projected screen' },
+  ],
+  'participant-links': [
+    { path: '/qr', nm: 'Join screen', ds: 'QR code to project while people arrive' },
+    { path: '/', nm: 'Participant view', ds: 'Routes each person to tapping or the camera' },
+  ],
+  'data-links': [
+    { path: '/api/export.csv', nm: 'Download CSV', ds: 'Long format — one row per observation', locked: true, raw: true },
+    { path: '/api/export', nm: 'Download JSON', ds: 'Everything, including calibration detail', locked: true, raw: true },
+    { path: '/admin', nm: 'Images', ds: 'Rescan the folder, choose the active image', locked: true },
+  ],
+  'diag-links': [
+    { path: '/gazetest', nm: 'Gaze tracking test', ds: 'Does the camera work on this device and network?' },
+    { path: '/calibrate?mock=1', nm: 'Rehearse calibration', ds: 'The full flow with no camera' },
+    { path: '/api/raw', nm: 'Raw state', ds: 'What the display is drawn from', raw: true },
+  ],
+};
 
-function renderCards() {
-  $('cards').innerHTML = PAGES.map((p) => {
-    const needsToken = p.locked && !token;
-    const href = p.locked && token ? `${p.path}?k=${encodeURIComponent(token)}` : p.path;
-    return `<a class="page-card ${needsToken ? 'locked' : ''}" href="${href}" target="_blank" rel="noopener">
-        <div class="top">
-          <span class="name">${p.name}</span>
-          <span class="who">${p.who}</span>
-        </div>
-        <div class="desc">${p.desc}</div>
-        <div class="path">${p.path}${p.locked ? (token ? '?k=…' : '  — needs token') : ''}</div>
-      </a>`;
-  }).join('');
+function renderLinks() {
+  for (const [id, items] of Object.entries(GROUPS)) {
+    $(id).innerHTML = items.map((it) => {
+      const needs = it.locked && !token;
+      const href = it.locked && token
+        ? `${it.path}${it.path.includes('?') ? '&' : '?'}k=${encodeURIComponent(token)}`
+        : it.path;
+      return `<a class="link ${needs ? 'locked' : ''}" href="${href}"
+                 ${it.raw ? '' : 'target="_blank" rel="noopener"'}>
+          <span><span class="nm">${it.nm}</span><span class="ds">${it.ds}</span></span>
+          <span class="pth">${needs ? 'needs token' : it.path}</span>
+        </a>`;
+    }).join('');
+  }
 }
 
-function renderTokenBox() {
-  const have = !!token;
-  $('token-msg').textContent = have
-    ? 'Token stored in this browser. The presenter pages below will open unlocked.'
-    : 'Paste the control token to unlock the presenter pages. It is printed in the server console at startup.';
-  $('forget').style.display = have ? '' : 'none';
-  $('token').value = '';
-  $('token').placeholder = have ? 'Replace stored token' : 'Control token';
-}
-
-function chip(label, value, state = '') {
-  return `<span class="chip ${state}"><b>${value}</b> ${label}</span>`;
+function card(label, value, note, cls) {
+  return `<div class="rcard ${cls}"><div class="l">${label}</div>
+          <div class="v">${value}</div><div class="n">${note}</div></div>`;
 }
 
 async function refresh() {
   let s;
   try { s = await fetch('/api/status').then((r) => r.json()); }
-  catch { $('status').innerHTML = chip('server unreachable', '!', 'bad'); return; }
+  catch { $('ready').innerHTML = card('Server', 'unreachable', '', 'bad'); return; }
 
-  $('status').innerHTML = [
-    chip('image' + (s.images.count === 1 ? '' : 's'), s.images.count,
-         s.images.count ? 'good' : 'bad'),
-    chip('model run' + (s.model_runs.count === 1 ? '' : 's'), s.model_runs.count,
-         s.model_runs.count ? 'good' : ''),
-    chip('response' + (s.responses.participants === 1 ? '' : 's'),
-         s.responses.participants),
-    chip(s.images.active ? `showing “${s.images.active.label}”` : 'no active image',
-         '', s.images.active ? 'good' : 'bad'),
-  ].join('');
+  const mode = s.capture_mode;
+  const c = s.conditions;
+  const g = s.gaze;
 
+  const cards = [
+    card('Images', s.images.count,
+         s.images.active ? `showing “${s.images.active.label}”` : 'none active',
+         s.images.count && s.images.active ? 'ok' : 'bad'),
+    card('Join address', s.join_url_reachable ? 'reachable' : 'local only',
+         s.join_url_reachable ? 'participants can connect' : 'set the port to Public',
+         s.join_url_reachable ? 'ok' : 'bad'),
+    card('Capture mode', mode,
+         mode === 'mixed' && c ? `${c.tap.completed} tapped · ${c.gaze.completed} tracked`
+                               : (mode === 'tap' ? 'everyone taps' : 'everyone tracked'), 'ok'),
+    card('Tap responses', s.responses.participants,
+         `${s.responses.markers} marks`, s.responses.participants ? 'ok' : ''),
+    card('Gaze data', g.contributors,
+         `${g.samples} samples${g.excluded ? ` · ${g.excluded} excluded` : ''}`,
+         g.contributors ? 'ok' : (mode === 'tap' ? '' : 'warn')),
+    card('Model runs', s.model_runs.count,
+         s.model_runs.synthetic ? `${s.model_runs.synthetic} SYNTHETIC` : 'ready',
+         s.model_runs.synthetic ? 'warn' : (s.model_runs.count ? 'ok' : 'warn')),
+  ];
+  $('ready').innerHTML = cards.join('');
   $('warnings').innerHTML = s.warnings.map((w) =>
     `<div class="warn-item ${w.level}">${w.text}</div>`).join('');
+  $('join').innerHTML = s.join_url_reachable ? s.join_url
+    : `${s.join_url} <span style="color:var(--danger)">— only this machine can open that</span>`;
+}
 
-  $('join').innerHTML = s.join_url_reachable
-    ? s.join_url
-    : `${s.join_url} <span style="color:var(--danger)">— reachable only on this machine</span>`;
+function renderToken() {
+  const have = !!token;
+  $('token-msg').textContent = have
+    ? 'Token stored in this browser — the locked links below will open directly.'
+    : 'Paste the control token to unlock the presenter pages. It is printed in the server console at startup.';
+  $('forget').style.display = have ? '' : 'none';
+  $('token').value = '';
 }
 
 $('save').addEventListener('click', () => {
   const v = $('token').value.trim();
   if (!v) return;
-  token = v;
-  localStorage.setItem(TOKEN_KEY, token);
-  renderTokenBox(); renderCards();
+  token = v; localStorage.setItem(TOKEN_KEY, token);
+  renderToken(); renderLinks();
 });
 $('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
 $('forget').addEventListener('click', () => {
-  token = '';
-  localStorage.removeItem(TOKEN_KEY);
-  renderTokenBox(); renderCards();
+  token = ''; localStorage.removeItem(TOKEN_KEY); renderToken(); renderLinks();
 });
 
 if (token) localStorage.setItem(TOKEN_KEY, token);
-renderTokenBox();
-renderCards();
-refresh();
+renderToken(); renderLinks(); refresh();
 setInterval(refresh, 3000);
 </script>
 </body>

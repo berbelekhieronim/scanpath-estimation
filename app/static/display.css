@@ -159,3 +159,9 @@ body.has-experimental .display { padding-bottom: 40px; }
 .json-overlay .s { color: #9ede9a; }
 .json-overlay .n { color: #f0b86e; }
 .json-overlay .b { color: #d78ff0; }
+
+
+/* Measured gaze — visually distinct from the tapped predictions, because the
+   whole point is that they are different kinds of evidence. */
+#gaze { pointer-events: none; }
+.legend .swatch.gaze { background: #b06bff; }

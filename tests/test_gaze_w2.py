@@ -226,10 +226,41 @@ def test_taps_are_acknowledged_immediately():
     assert "navigator.vibrate" in src
 
 
-def test_instructions_tell_people_to_rest_the_phone():
-    """Measured on a real device: resting beats holding, by a lot."""
+def test_instructions_lead_with_eyes_visible_in_the_preview():
+    """Revised after device testing. Resting the phone helps, but being able
+    to see your own eyes in the preview matters more, and mandating the desk
+    was awkward — either posture works if the eyes are in frame."""
     src = (STATIC / "calibrate.html").read_text()
-    assert "Rest your phone" in src
+    assert "eyes are visible" in src
+    assert "Hold the phone steady, or rest it on the desk" in src
+
+
+def test_all_overlay_copy_lives_inside_ov_body():
+    """overlay() replaces #ov-body only. A sibling paragraph would survive
+    every later screen — which is how instructions about a moving dot ended
+    up on the thank-you screen."""
+    src = (STATIC / "calibrate.html").read_text()
+    panel = src[src.index('<div class="overlay" id="overlay">'):src.index('id="ov-btn"')]
+    after_body = panel[panel.index('id="ov-body"'):]
+    assert "<p>" not in after_body.split("</div>")[1] if "</div>" in after_body else True
+    assert '<div id="ov-body">' in src
+
+
+def test_viewing_stage_shows_nothing_but_the_picture():
+    """A countdown ring is itself a fixation target, and this is the one
+    stage where the eye must have no target other than the image."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert 'id="vring"' not in src and "vring-fg" not in src
+    assert "$('cam').style.display = 'none'" in src
+    assert "$('face-chip').style.display = 'none'" in src
+
+
+def test_the_thank_you_screen_has_no_button_and_does_not_navigate():
+    """Navigating away landed the participant on the tap screen — the wrong
+    condition for them, and where the stray Submit and Undo came from."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "All done — look up at the screen" in src
+    assert "location.href = '/?viewed=1'" not in src
 
 
 def test_diagnostics_are_persisted(client):

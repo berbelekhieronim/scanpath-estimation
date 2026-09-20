@@ -26,6 +26,7 @@
       <canvas id="heat"></canvas>
       <svg id="paths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
       <svg id="model" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <canvas id="gaze"></canvas>
     </div>
   </div>
 
@@ -66,6 +67,17 @@ function renderPaths(paths, show) {
               stroke-width="2" stroke-linejoin="round" stroke-linecap="round"
               vector-effect="non-scaling-stroke"/>${dots}`;
   }).join('');
+}
+
+function renderGaze(data, show) {
+  const c = $('gaze');
+  if (!c.width || !c.height) return;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!show || !data || !data.points.length) return;
+  // Measured gaze is coarse — roughly a fifth of the screen in error — so it
+  // is drawn as a density cloud rather than points pretending to precision.
+  drawHeatmap(c, data.points, 0.12);
 }
 
 function renderModel(run, show) {
@@ -292,6 +304,10 @@ function renderLegend(layers, n, run) {
     `<span class="key"><span class="swatch heat"></span>where people said they'd look — fewer &rarr; more</span>`);
   if (layers.paths && n) keys.push(
     `<span class="key"><span class="swatch path"></span>individual orders, first look ringed brighter</span>`);
+  if (layers.gaze && n !== undefined) {
+    keys.push(`<span class="key"><span class="swatch gaze"></span>measured gaze
+      (camera)</span>`);
+  }
   if (layers.model && run) {
     const extra = (run.samples_norm || []).length - 1;
     keys.push(`<span class="key"><span class="swatch model"></span>model prediction` +
@@ -308,18 +324,22 @@ function sizeCanvas() {
   if (!r.width || !r.height) return false;
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; return true; }
+  const g = $('gaze');
+  if (c.width !== w || c.height !== h) {
+    c.width = w; c.height = h; g.width = w; g.height = h; return true;
+  }
   return false;
 }
 
 async function tick() {
-  let state, data, model, stats;
+  let state, data, model, stats, gaze;
   try {
-    [state, data, model, stats] = await Promise.all([
+    [state, data, model, stats, gaze] = await Promise.all([
       fetch('/api/state').then((r) => r.json()),
       fetch('/api/markers').then((r) => r.json()),
       fetch('/api/model').then((r) => r.json()),
       fetch('/api/analysis').then((r) => r.json()),
+      fetch('/api/gaze/aggregate').then((r) => r.json()),
     ]);
   } catch { return; }
 
@@ -337,6 +357,7 @@ async function tick() {
     model.run && [model.run.run_id, model.run.source, model.run.prompt_kind],
     state.layers.analysis && stats.ok && stats.model_vs_human,
     state.layers.prompt && model.config && model.config.prompt_text,
+    state.layers.gaze && gaze.contributors,
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -364,6 +385,7 @@ async function tick() {
   if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick
   if (changed || resized) {
     drawHeatmap($('heat'), state.layers.heatmap ? data.points : []);
+    renderGaze(gaze, state.layers.gaze);
     renderPaths(data.paths, state.layers.paths);
     renderModel(model.run, state.layers.model);
     renderSyntheticWarning(model.run, state.layers.model);

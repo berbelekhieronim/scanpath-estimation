@@ -97,7 +97,7 @@ class LAYERS:
     """Layer visibility. 'Clear' hides a layer; it never deletes data."""
 
     KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
-            "prompt": "0", "json": "0"}
+            "prompt": "0", "json": "0", "gaze": "0"}
 
     @classmethod
     def current(cls) -> dict:
@@ -250,7 +250,22 @@ def api_status(request: Request):
                     "metrics stay empty until you run precompute.py.",
         })
 
+    gaze = db.gaze_session_stats(round_["id"]) if round_ else {
+        "total": 0, "usable": 0, "excluded": 0, "grades": {}}
+    gaze_pts = db.round_gaze_points(round_["id"]) if round_ else {
+        "points": [], "contributors": 0}
+    conditions = db.assignment_counts(round_["id"]) if round_ else None
+
     return {
+        "capture_mode": db.get_state("capture_mode", "tap"),
+        "conditions": conditions,
+        "gaze": {
+            "sessions": gaze["total"],
+            "usable": gaze["usable"],
+            "excluded": gaze["excluded"],
+            "contributors": gaze_pts["contributors"],
+            "samples": len(gaze_pts["points"]),
+        },
         "join_url": join["url"],
         "join_url_source": join["source"],
         "join_url_reachable": reachable,

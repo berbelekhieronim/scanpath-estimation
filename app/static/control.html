@@ -160,6 +160,7 @@ let PROBES = [];
 const LAYERS = [
   { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
   { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
+  { key: 'gaze',     name: 'Measured gaze', desc: 'Where the camera group actually looked' },
   { key: 'model',    name: 'Model scanpath', desc: 'DeepGaze3.5-VL prediction' },
   { key: 'analysis', name: 'Agreement metrics', desc: 'Human vs model, with baselines' },
   { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was actually asked, in full' },
@@ -252,11 +253,19 @@ async function refresh() {
     const cond = await fetch('/api/conditions').then((r) => r.json());
     if (document.activeElement !== $('capture-mode')) $('capture-mode').value = cond.mode;
     const c = cond.counts;
-    $('condition-counts').innerHTML = cond.mode === 'tap'
+    const st = await fetch('/api/status').then((r) => r.json()).catch(() => null);
+    const g = st && st.gaze;
+    const gazeLine = g
+      ? ` · gaze data: <strong>${g.contributors}</strong> contributor${
+          g.contributors === 1 ? '' : 's'}, ${g.samples} samples${
+          g.excluded ? `, ${g.excluded} excluded` : ''}`
+      : '';
+    $('condition-counts').innerHTML = (cond.mode === 'tap'
       ? 'Everyone taps.'
       : `<strong>${c.tap.completed}</strong> tapped ·
          <strong>${c.gaze.completed}</strong> eye-tracked
-         <span style="opacity:.7">(${c.tap.assigned} / ${c.gaze.assigned} assigned)</span>`;
+         <span style="opacity:.7">(${c.tap.assigned} / ${c.gaze.assigned} assigned)</span>`)
+      + gazeLine;
     renderModelStatus(model);
   } catch {}
 }
