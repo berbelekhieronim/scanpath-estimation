@@ -320,6 +320,10 @@ python tools/push_result.py --repo ../DeepGaze3.5-VL \
     --image data/images/street.jpg --mode freeview --num-fixations 5
 ```
 
+On a CUDA machine add `--device cuda`; auto-detection prefers it. The first
+real run took 85 minutes on MPS, which is minutes on an RTX — see
+`docs/SPEC-EXPERIMENTS.md` for what that makes worth running.
+
 It computes locally and pushes; the display picks it up within two seconds.
 Takes 1–3 minutes — narrate over it, and keep the precomputed run on screen as
 the fallback.

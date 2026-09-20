@@ -42,10 +42,15 @@ def pick_device(requested: str) -> str:
 
     if requested != "auto":
         return requested
-    if torch.backends.mps.is_available():
-        return "mps"
+    # CUDA first: where both exist it is the faster path by a wide margin,
+    # and the ordering used to hand an RTX machine to Apple's backend.
     if torch.cuda.is_available():
         return "cuda"
+    try:
+        if torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
     return "cpu"
 
 
