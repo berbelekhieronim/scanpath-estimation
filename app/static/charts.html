@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Comparison charts — scanpath-estimation</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  /* Series colours live in the script, next to the ramps, so the legend, the
+     panels and the table cannot drift apart. Gridlines are a hairline one
+     shade off the surface, in both modes. */
+  :root { --grid-line: var(--border); }
+
+  h2 { font-size: 1rem; margin: 0 0 4px; }
+  .lede { color: var(--muted); font-size: 0.875rem; margin: 0 0 16px;
+          max-width: 62ch; }
+  section { margin-bottom: 34px; }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; align-items: center;
+            margin-bottom: 18px; }
+  .legend .item { display: flex; align-items: center; gap: 8px;
+                  font-size: 0.875rem; }
+  .legend .dot { width: 12px; height: 12px; border-radius: 3px;
+                 flex: 0 0 auto; }
+  .legend .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .legend .item.off { opacity: .4; }
+
+  .panels { display: grid; gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .panel { background: var(--surface); border: 1px solid var(--border);
+           border-radius: var(--radius); padding: 14px; }
+  .panel h3 { margin: 0 0 2px; font-size: 0.9375rem; display: flex;
+              align-items: center; gap: 8px; }
+  .panel h3 .dot { width: 10px; height: 10px; border-radius: 3px; }
+  .panel .who { color: var(--muted); font-size: 0.8125rem; margin-bottom: 10px; }
+  .panel svg { width: 100%; height: auto; display: block; }
+  .panel.empty { display: flex; flex-direction: column; justify-content: center;
+                 color: var(--muted); font-size: 0.875rem; min-height: 180px; }
+
+  .scale { display: flex; align-items: center; gap: 10px; margin-top: 12px;
+           font-size: 0.75rem; color: var(--muted); }
+  .scale .bar { flex: 1; height: 10px; border-radius: 3px; }
+
+  .wide { background: var(--surface); border: 1px solid var(--border);
+          border-radius: var(--radius); padding: 16px; }
+
+  /* A plot squeezed to phone width stops being readable long before it stops
+     fitting, so below its natural width it scrolls sideways instead of
+     shrinking. The table view carries the same numbers either way. */
+  .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .scroll-x > svg { min-width: 620px; }
+  .scroll-x > table { min-width: 560px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.875rem; }
+  th, td { text-align: right; padding: 7px 10px;
+           border-bottom: 1px solid var(--border);
+           font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left;
+                                   font-variant-numeric: normal; }
+  thead th { color: var(--muted); font-weight: 600; font-size: 0.8125rem; }
+  td.na { color: var(--muted); }
+
+  .tip { position: fixed; z-index: 30; pointer-events: none;
+         background: var(--surface-2); border: 1px solid var(--border);
+         border-radius: 8px; padding: 8px 11px; font-size: 0.8125rem;
+         box-shadow: 0 6px 24px rgba(0,0,0,.45); max-width: 240px; }
+  .tip .k { color: var(--muted); }
+  .tip strong { font-variant-numeric: tabular-nums; }
+
+  .note { color: var(--muted); font-size: 0.8125rem; margin-top: 10px; }
+  .banner { border: 1px solid var(--warn); border-radius: var(--radius);
+            padding: 12px 14px; margin-bottom: 20px; font-size: 0.875rem; }
+  .banner.err { border-color: var(--danger); }
+  .links a { color: var(--accent); text-decoration: none; margin-right: 18px; }
+  .links a:hover { text-decoration: underline; }
+  .swatch { display: inline-block; width: 10px; height: 10px;
+            border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .diff-row { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
+  .diff-row .map { flex: 0 1 330px; min-width: 240px; }
+  .diff-row .key { flex: 1 1 260px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="bar">
+    <div>
+      <h1>Tapped vs measured vs model</h1>
+      <div class="sub" id="subtitle">Loading…</div>
+    </div>
+    <div class="links">
+      <a href="/display" target="_blank">Display &rarr;</a>
+      <a href="/start">Start page &rarr;</a>
+    </div>
+  </header>
+
+  <div id="banners"></div>
+
+  <div class="legend" id="legend"></div>
+
+  <section>
+    <h2>Where each group looked</h2>
+    <p class="lede">Each panel is one group's attention spread over a
+      <span id="grid-name">3&times;3</span> grid, averaged <em>per person</em>
+      so nobody who produced more samples
+      counts for more. All three are smoothed with the same blur, sized to the
+      least precise source, and share one colour scale — so a darker cell means
+      more attention, in every panel.</p>
+    <div class="panels" id="panels"></div>
+    <div class="scale">
+      <span>less looked at</span>
+      <div class="bar" id="seq-scale"></div>
+      <span>more</span>
+    </div>
+  </section>
+
+  <section id="diff-section">
+    <h2>Where the two human groups differ</h2>
+    <p class="lede">Measured gaze minus tapped guesses, cell by cell. Red means
+      people actually looked there more than they said they would; blue means
+      they said it more than they looked.</p>
+    <div class="wide" id="diff"></div>
+  </section>
+
+  <section>
+    <h2>Attention per cell, with uncertainty</h2>
+    <p class="lede">The same numbers as a dot plot. The line through each dot
+      is a 95% interval across participants: where the intervals for two
+      groups do not overlap, the difference is unlikely to be noise. Wide bars
+      mean few people, not a strong finding.</p>
+    <div class="wide" id="dots"></div>
+  </section>
+
+  <section>
+    <h2>How closely the maps agree</h2>
+    <p class="lede">Correlation between each pair of maps, judged against a
+      ceiling: how well a group agrees with <em>itself</em> when split in half.
+      No pair can be expected to beat that, so the percentage of the ceiling is
+      the honest figure.</p>
+    <div class="wide" id="agree"></div>
+  </section>
+
+  <section>
+    <h2>The numbers</h2>
+    <p class="lede">Everything above, as a table.</p>
+    <div class="wide" id="table"></div>
+  </section>
+
+</div>
+
+<script>
+const LIGHT = window.matchMedia("(prefers-color-scheme: light)").matches;
+
+const SERIES = [
+  {key: "tapped",   label: "Tapped",
+   who: "phones, where people said they would look"},
+  {key: "measured", label: "Measured",
+   who: "webcam gaze, where they actually looked"},
+  {key: "model",    label: "Model",
+   who: "DeepGaze prediction"},
+];
+// One source of truth for series colour, so the legend, the panels, the dots
+// and the agreement table cannot drift apart.
+const HEX = LIGHT
+  ? {tapped: "#2a78d6", measured: "#d95926", model: "#199e70"}
+  : {tapped: "#3987e5", measured: "#d95926", model: "#199e70"};
+
+// Sequential: one hue, ordered from "near zero" to "most". Near zero is the
+// step that recedes toward this mode's surface, which is the light end on a
+// light page and the dark end on a dark one — a selected ramp per mode, not
+// an automatic flip.
+const BLUE = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf",
+              "#184f95", "#0d366b"];
+const SEQ = LIGHT ? BLUE : BLUE.slice().reverse();
+
+// Diverging: two poles that read as opposite, with a neutral gray midpoint —
+// never a hue in the middle. Stepped from each mode's own midpoint.
+const DIV = LIGHT
+  ? {mid: "#f0efec",
+     lo: ["#afc8e8", "#70a1e0", "#2a78d6"],
+     hi: ["#f3bbb3", "#ee867e", "#e34948"]}
+  : {mid: "#383835",
+     lo: ["#3d536e", "#3d6da8", "#3987e5"],
+     hi: ["#714a46", "#aa5956", "#e66767"]};
+
+/* Cell names follow the grid, because the grid is a query parameter. Hard-
+   coding nine names once meant a 4x4 run labelled its second cell
+   "top-centre", which it is not. */
+const BANDS = {
+  2: {rows: ["top", "bottom"], cols: ["left", "right"]},
+  3: {rows: ["top", "middle", "bottom"], cols: ["left", "centre", "right"]},
+};
+function cellNames(n) {
+  const b = BANDS[n];
+  const out = [];
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!b) { out.push(`row ${r + 1}, column ${c + 1}`); continue; }
+      const rw = b.rows[r], cl = b.cols[c];
+      out.push(rw === "middle" && cl === "centre" ? "centre" : `${rw}-${cl}`);
+    }
+  }
+  return out;
+}
+let CELL_NAMES = cellNames(3);
+
+const $ = (id) => document.getElementById(id);
+const pct = (v) => (v * 100).toFixed(1) + "%";
+const esc = (s) => String(s).replace(/[&<>"]/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let DATA = null;
+
+/* ---------- tooltip ---------- */
+let tipEl = null;
+function showTip(html, ev) {
+  if (!tipEl) {
+    tipEl = document.createElement("div");
+    tipEl.className = "tip";
+    document.body.appendChild(tipEl);
+  }
+  tipEl.innerHTML = html;
+  tipEl.hidden = false;
+  const pad = 14, r = tipEl.getBoundingClientRect();
+  let x = ev.clientX + pad, y = ev.clientY + pad;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = ev.clientY - r.height - pad;
+  tipEl.style.left = Math.max(8, x) + "px";
+  tipEl.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { if (tipEl) tipEl.hidden = true; }
+
+function hoverable(node, html) {
+  node.addEventListener("pointerenter", (e) => showTip(html, e));
+  node.addEventListener("pointermove", (e) => showTip(html, e));
+  node.addEventListener("pointerleave", hideTip);
+  node.setAttribute("tabindex", "0");
+  node.addEventListener("focus", (e) => {
+    const r = node.getBoundingClientRect();
+    showTip(html, {clientX: r.left + r.width / 2, clientY: r.top});
+  });
+  node.addEventListener("blur", hideTip);
+}
+
+/* ---------- colour helpers ---------- */
+function seqColour(v, max) {
+  if (!(max > 0)) return SEQ[0];
+  const i = Math.min(SEQ.length - 1,
+                     Math.floor((v / max) * SEQ.length * 0.999));
+  return SEQ[i];
+}
+function divColour(v, max) {
+  // A cell within a few percent of zero is "no difference", and gets the
+  // neutral midpoint rather than a faint hue that invites over-reading.
+  if (!(max > 0) || Math.abs(v) < max * 0.04) return DIV.mid;
+  const arm = v > 0 ? DIV.hi : DIV.lo;
+  const i = Math.min(arm.length - 1,
+                     Math.floor((Math.abs(v) / max) * arm.length * 0.999));
+  return arm[i];
+}
+// Ink on a filled cell: the ramp spans light to dark, so the label has to
+// follow the fill or it disappears at one end.
+function inkFor(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  const lum = (0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255)
+               + 0.0722 * (n & 255)) / 255;
+  return lum > 0.55 ? "#12131a" : "#f2f4f8";
+}
+
+function svg(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+/* ---------- 1. density panels ---------- */
+function gridSvg(cells, n, opts) {
+  const S = 300, gap = 2, cw = (S - gap * (n - 1)) / n;
+  const el = svg("svg", {viewBox: `0 0 ${S} ${S}`, role: "img",
+                         "aria-label": opts.aria});
+  cells.forEach((v, i) => {
+    const r = Math.floor(i / n), c = i % n;
+    const x = c * (cw + gap), y = r * (cw + gap);
+    const fill = opts.colour(v);
+    const rect = svg("rect", {x, y, width: cw, height: cw, rx: 4, fill});
+    // A 2px surface gap between adjacent fills, so touching cells of a
+    // similar shade still read as two cells.
+    el.appendChild(rect);
+    const t = svg("text", {
+      x: x + cw / 2, y: y + cw / 2 + 5, "text-anchor": "middle",
+      "font-size": 15, "font-weight": 600, fill: inkFor(fill),
+      "font-family": "inherit",
+    });
+    t.textContent = opts.label(v);
+    t.setAttribute("pointer-events", "none");
+    el.appendChild(t);
+    hoverable(rect, opts.tip(i, v));
+  });
+  return el;
+}
+
+function renderPanels() {
+  const host = $("panels");
+  host.textContent = "";
+  const n = DATA.grid;
+  const maps = DATA.maps || {};
+  // One shared maximum across all three panels. Per-panel scales would make
+  // a flat map look identical to a peaked one.
+  let max = 0;
+  for (const k in maps) max = Math.max(max, ...maps[k].cells);
+
+  SERIES.forEach((s) => {
+    const m = maps[s.key];
+    const card = document.createElement("div");
+    card.className = "panel" + (m ? "" : " empty");
+    const h = document.createElement("h3");
+    h.innerHTML = `<span class="dot" style="background:${HEX[s.key]}"></span>`
+                + esc(s.label);
+    card.appendChild(h);
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = m ? `${m.n} ${m.n === 1 ? "person" : "people"} — ${s.who}`
+                        : "no data yet";
+    card.appendChild(who);
+    if (m) {
+      card.appendChild(gridSvg(m.cells, n, {
+        aria: `${s.label}: attention per grid cell`,
+        colour: (v) => seqColour(v, max),
+        label: (v) => Math.round(v * 100) + "%",
+        tip: (i, v) => {
+          const ci = m.ci[i];
+          return `<div class="k">${esc(s.label)} — ${esc(CELL_NAMES[i])}</div>`
+               + `<strong>${pct(v)}</strong> of attention`
+               + `<div class="k">95% interval ${pct(ci[0])}–${pct(ci[1])}`
+               + ` · n=${m.n}</div>`;
+        },
+      }));
+    } else {
+      const p = document.createElement("div");
+      p.textContent = s.key === "model"
+        ? "Run precompute.py to fill this panel."
+        : "No completed sessions in this group yet.";
+      card.appendChild(p);
+    }
+    host.appendChild(card);
+  });
+
+  // SEQ runs near-zero first, and the legend reads left to right, so the
+  // gradient takes it in order in either mode.
+  $("seq-scale").style.background =
+    `linear-gradient(to right, ${SEQ.join(",")})`;
+}
+
+/* ---------- 2. difference map ---------- */
+function renderDiff() {
+  const host = $("diff");
+  host.textContent = "";
+  const d = DATA.difference;
+  if (!d) {
+    $("diff-section").hidden = true;
+    return;
+  }
+  $("diff-section").hidden = false;
+  const max = Math.max(...d.map(Math.abs)) || 1;
+
+  const row = document.createElement("div");
+  row.className = "diff-row";
+
+  const map = document.createElement("div");
+  map.className = "map";
+  map.appendChild(gridSvg(d, DATA.grid, {
+    aria: "Measured minus tapped, per grid cell",
+    colour: (v) => divColour(v, max),
+    label: (v) => (v > 0 ? "+" : "") + Math.round(v * 100) + "%",
+    tip: (i, v) => {
+      const dir = v > 0 ? "looked at more than expected"
+                        : "expected more than looked at";
+      return `<div class="k">${esc(CELL_NAMES[i])}</div>`
+           + `<strong>${v > 0 ? "+" : ""}${pct(v)}</strong>`
+           + `<div class="k">${dir}</div>`;
+    },
+  }));
+  const scale = document.createElement("div");
+  scale.className = "scale";
+  scale.innerHTML =
+    `<span>said&nbsp;more</span><div class="bar" style="background:`
+    + `linear-gradient(to right, ${DIV.lo.slice().reverse().join(",")},`
+    + `${DIV.mid},${DIV.hi.join(",")})"></div><span>looked&nbsp;more</span>`;
+  map.appendChild(scale);
+  row.appendChild(map);
+
+  const key = document.createElement("div");
+  key.className = "key";
+  const biggest = d.indexOf(Math.max(...d));
+  const smallest = d.indexOf(Math.min(...d));
+  key.innerHTML =
+    `<p class="note" style="margin-top:0">Percentage points of each group's`
+    + ` total attention. Positive and negative cells must cancel out — both`
+    + ` maps sum to 100%, so somewhere has to lose what somewhere else`
+    + ` gains.</p>`
+    + `<p class="note">Biggest gap: <strong>`
+    + `${esc(CELL_NAMES[biggest])}</strong> drew`
+    + ` ${pct(d[biggest])} more measured gaze than tapped guesses, while`
+    + ` <strong>${esc(CELL_NAMES[smallest])}</strong>`
+    + ` drew ${pct(Math.abs(d[smallest]))} less.</p>`
+    + `<p class="note">Cells within a few percent of zero are drawn neutral`
+    + ` grey: at this sample size they are not a difference worth reading.</p>`;
+  row.appendChild(key);
+  host.appendChild(row);
+}
+
+/* ---------- 3. dot plot with intervals ---------- */
+
+/* Pick one row per series to label directly, so identity never rests on
+   colour alone — but never a row where the labels would sit on top of each
+   other. Each series takes the free row where it is furthest from its
+   neighbours, and no row is used twice. */
+function labelRows(present, maps, cells) {
+  const taken = new Set(), chosen = {};
+  present.forEach((s) => {
+    let best = -1, bestGap = -1;
+    for (let i = 0; i < cells; i++) {
+      if (taken.has(i)) continue;
+      const v = maps[s.key].cells[i];
+      let gap = Infinity;
+      present.forEach((o) => {
+        if (o.key !== s.key) {
+          gap = Math.min(gap, Math.abs(maps[o.key].cells[i] - v));
+        }
+      });
+      if (gap > bestGap) { bestGap = gap; best = i; }
+    }
+    if (best >= 0) { taken.add(best); chosen[s.key] = best; }
+  });
+  return chosen;
+}
+
+function renderDots() {
+  const host = $("dots");
+  host.textContent = "";
+  const maps = DATA.maps || {};
+  const present = SERIES.filter((s) => maps[s.key]);
+  if (!present.length) { host.textContent = "No data yet."; return; }
+
+  const cells = DATA.grid * DATA.grid;
+  const rowH = 42, padL = 112, padR = 96, padT = 24, padB = 34, W = 780;
+  const H = padT + cells * rowH + padB;
+  let hi = 0;
+  present.forEach((s) => maps[s.key].ci.forEach((c) => hi = Math.max(hi, c[1])));
+  hi = Math.max(hi, 0.05);
+  const x = (v) => padL + (v / hi) * (W - padL - padR);
+
+  const el = svg("svg", {viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Share of attention per grid cell, by group, with 95% intervals"});
+
+  // Hairline grid, one shade off the surface. Solid, never dashed.
+  const ticks = 5;
+  for (let i = 0; i <= ticks; i++) {
+    const v = (hi / ticks) * i;
+    el.appendChild(svg("line", {x1: x(v), x2: x(v), y1: padT - 6, y2: H - padB,
+      stroke: "var(--grid-line)", "stroke-width": 1}));
+    const t = svg("text", {x: x(v), y: H - padB + 20, "text-anchor": "middle",
+      "font-size": 11, fill: "var(--muted)", "font-family": "inherit"});
+    t.textContent = Math.round(v * 100) + "%";
+    el.appendChild(t);
+  }
+
+  const labels = labelRows(present, maps, cells);
+
+  for (let i = 0; i < cells; i++) {
+    const cy = padT + i * rowH + rowH / 2;
+    const lab = svg("text", {x: padL - 14, y: cy + 4, "text-anchor": "end",
+      "font-size": 12, fill: "var(--muted)", "font-family": "inherit"});
+    lab.textContent = CELL_NAMES[i];
+    el.appendChild(lab);
+
+    present.forEach((s, si) => {
+      const m = maps[s.key];
+      const off = (si - (present.length - 1) / 2) * 11;
+      const v = m.cells[i], ci = m.ci[i];
+      const g = svg("g", {});
+      g.appendChild(svg("line", {
+        x1: x(ci[0]), x2: x(ci[1]), y1: cy + off, y2: cy + off,
+        stroke: HEX[s.key], "stroke-width": 2, "stroke-linecap": "round",
+        opacity: .5}));
+      // A 2px surface ring, not a border, keeps overlapping dots separable.
+      g.appendChild(svg("circle", {cx: x(v), cy: cy + off, r: 5,
+        fill: HEX[s.key], stroke: "var(--surface)", "stroke-width": 2}));
+      if (labels[s.key] === i) {
+        const t = svg("text", {x: Math.max(x(ci[1]), x(v)) + 9,
+          y: cy + off + 4, "font-size": 11, fill: "var(--muted)",
+          "font-family": "inherit"});
+        t.textContent = s.label;
+        g.appendChild(t);
+      }
+      // An invisible hit band, so the tooltip does not demand a direct hit
+      // on a 10px dot.
+      const hit = svg("rect", {x: padL - 10, y: cy + off - 8,
+        width: W - padL - 10, height: 16, fill: "transparent"});
+      g.insertBefore(hit, g.firstChild);
+      hoverable(g, `<div class="k">${esc(s.label)} — `
+        + `${esc(CELL_NAMES[i])}</div>`
+        + `<strong>${pct(v)}</strong>`
+        + `<div class="k">95% interval ${pct(ci[0])}–${pct(ci[1])} · n=${m.n}</div>`);
+      el.appendChild(g);
+    });
+  }
+
+  const scroller = document.createElement("div");
+  scroller.className = "scroll-x";
+  scroller.appendChild(el);
+  host.appendChild(scroller);
+  const note = document.createElement("div");
+  note.className = "note";
+  note.textContent = `Share of that group's total attention. All ${cells} `
+    + "cells add up to 100% within each group, so the groups are comparable "
+    + "even though they are different sizes.";
+  host.appendChild(note);
+}
+
+/* ---------- 4. agreement ---------- */
+function renderAgree() {
+  const host = $("agree");
+  host.textContent = "";
+  const pairs = DATA.pairs || {};
+  const keys = Object.keys(pairs);
+  if (!keys.length) { host.textContent = "Needs at least two sources."; return; }
+
+  const label = (k) => (SERIES.find((s) => s.key === k) || {label: k}).label;
+  const t = document.createElement("table");
+  t.innerHTML = "<thead><tr><th>Pair</th><th>Correlation</th>"
+    + "<th>Ceiling</th><th>% of ceiling</th></tr></thead>";
+  const tb = document.createElement("tbody");
+  keys.forEach((k) => {
+    const [a, b] = k.split("|"), p = pairs[k];
+    const ceil = Math.max(DATA.ceilings[a] ?? 0, DATA.ceilings[b] ?? 0) || null;
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td><span class="swatch" style="background:${HEX[a]}"></span>`
+      + `${esc(label(a))} vs `
+      + `<span class="swatch" style="background:${HEX[b]}"></span>`
+      + `${esc(label(b))}</td>`
+      + cell(p.cc, (v) => v.toFixed(2))
+      + cell(ceil, (v) => v.toFixed(2))
+      + cell(p.of_ceiling, (v) => Math.round(v * 100) + "%");
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  host.appendChild(t);
+
+  const note = document.createElement("div");
+  note.className = "note";
+  const ceilKnown = Object.values(DATA.ceilings || {}).some((v) => v !== null);
+  note.textContent = ceilKnown
+    ? "Correlation runs from −1 (opposite) through 0 (unrelated) to 1 "
+      + "(identical). The ceiling needs at least four people in a group; "
+      + "without it the percentage column stays blank."
+    : "Ceilings need at least four people per group. Until then only the raw "
+      + "correlation is shown, and it cannot be judged good or bad.";
+  host.appendChild(note);
+}
+
+function cell(v, fmt) {
+  return v === null || v === undefined
+    ? '<td class="na">—</td>'
+    : `<td>${esc(fmt(v))}</td>`;
+}
+
+/* ---------- 5. table view ---------- */
+function renderTable() {
+  const host = $("table");
+  host.textContent = "";
+  const maps = DATA.maps || {};
+  const present = SERIES.filter((s) => maps[s.key]);
+  if (!present.length) { host.textContent = "No data yet."; return; }
+
+  const t = document.createElement("table");
+  let head = "<thead><tr><th>Cell</th>";
+  present.forEach((s) => {
+    head += `<th>${esc(s.label)} (n=${maps[s.key].n})</th>`;
+  });
+  if (DATA.difference) head += "<th>Measured − tapped</th>";
+  t.innerHTML = head + "</tr></thead>";
+
+  const tb = document.createElement("tbody");
+  for (let i = 0; i < DATA.grid * DATA.grid; i++) {
+    const tr = document.createElement("tr");
+    let row = `<td>${esc(CELL_NAMES[i])}</td>`;
+    present.forEach((s) => {
+      const m = maps[s.key];
+      row += `<td>${pct(m.cells[i])}`
+           + `<span class="na"> (${pct(m.ci[i][0])}–${pct(m.ci[i][1])})</span></td>`;
+    });
+    if (DATA.difference) {
+      const d = DATA.difference[i];
+      row += `<td>${d > 0 ? "+" : ""}${pct(d)}</td>`;
+    }
+    tr.innerHTML = row;
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  const scroller = document.createElement("div");
+  scroller.className = "scroll-x";
+  scroller.appendChild(t);
+  host.appendChild(scroller);
+}
+
+/* ---------- chrome ---------- */
+function renderLegend() {
+  const host = $("legend");
+  host.textContent = "";
+  SERIES.forEach((s) => {
+    const m = (DATA.maps || {})[s.key];
+    const d = document.createElement("div");
+    d.className = "item" + (m ? "" : " off");
+    d.innerHTML = `<span class="dot" style="background:${HEX[s.key]}"></span>`
+      + `<span>${esc(s.label)}</span>`
+      + `<span class="n">${m ? "n=" + m.n : "none yet"}</span>`;
+    host.appendChild(d);
+  });
+}
+
+function renderBanners() {
+  const host = $("banners");
+  host.textContent = "";
+  const add = (cls, text) => {
+    const d = document.createElement("div");
+    d.className = "banner " + cls;
+    d.textContent = text;
+    host.appendChild(d);
+  };
+  if (DATA.model_source && String(DATA.model_source).includes("synthetic")) {
+    add("err", "The model panel is a synthetic placeholder, not model output. "
+      + "Any agreement involving it is meaningless until precompute.py has run "
+      + "against real weights.");
+  }
+  const thin = SERIES.filter((s) => {
+    const m = (DATA.maps || {})[s.key];
+    return m && m.n > 0 && m.n < 4;
+  });
+  if (thin.length) {
+    add("", thin.map((s) => s.label).join(" and ")
+      + (thin.length > 1 ? " have" : " has")
+      + " fewer than four participants. The intervals are drawn but the "
+      + "ceiling cannot be estimated, so treat every number here as a sketch.");
+  }
+  if (DATA.gaze_excluded) {
+    add("", DATA.gaze_excluded + " gaze session(s) excluded for failing "
+      + "calibration. They are counted, not silently dropped.");
+  }
+}
+
+function renderSubtitle() {
+  $("grid-name").textContent = `${DATA.grid}\u00d7${DATA.grid}`;
+  const img = DATA.image ? (DATA.image.label || DATA.image.filename) : "—";
+  const probe = DATA.config && DATA.config.probe
+    ? DATA.config.probe.label : "—";
+  const grid = `${DATA.grid}×${DATA.grid} grid`;
+  $("subtitle").textContent = `${img} · ${probe} · ${grid} · `
+    + `blur ${Math.round(DATA.sigma * 100)}% of width`;
+}
+
+async function load() {
+  // grid and sigma pass straight through, so ?grid=4 on this page asks the
+  // endpoint the same question. Both are clamped server-side.
+  const q = new URLSearchParams();
+  const here = new URLSearchParams(location.search);
+  ["grid", "sigma"].forEach((k) => {
+    if (here.has(k)) q.set(k, here.get(k));
+  });
+  const url = "/api/compare/maps" + (q.toString() ? "?" + q : "");
+  let r;
+  try {
+    r = await fetch(url, {cache: "no-store"});
+  } catch (e) {
+    $("banners").innerHTML =
+      '<div class="banner err">Cannot reach the server.</div>';
+    return;
+  }
+  const d = await r.json();
+  if (!d.ok) {
+    $("subtitle").textContent = d.reason || "nothing to compare yet";
+    $("banners").innerHTML = '<div class="banner">'
+      + esc(d.reason === "no round open"
+            ? "No round is open. Pick an image in Admin."
+            : "No completed responses yet. The charts fill in as people "
+              + "finish.") + "</div>";
+    ["panels", "diff", "dots", "agree", "table"].forEach(
+      (id) => { $(id).textContent = ""; });
+    $("legend").textContent = "";
+    return;
+  }
+  DATA = d;
+  CELL_NAMES = cellNames(DATA.grid);
+  renderSubtitle();
+  renderBanners();
+  renderLegend();
+  renderPanels();
+  renderDiff();
+  renderDots();
+  renderAgree();
+  renderTable();
+}
+
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

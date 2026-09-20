@@ -207,3 +207,55 @@ map, proportions chart), generate real model runs, run one session with
 4. **Should the measured group's first second be treated separately** in the
    main comparison, or only in the sequence section? It is the most centre-
    biased and most informative part of the recording.
+
+---
+
+## 7. What was built (2026-09-20)
+
+All four visualisations from §4 now exist at `/charts`, fed by
+`GET /api/compare/maps` (`analysis.comparison_maps`). Five things landed
+differently from the spec above, each for a reason.
+
+**1. The difference map's zero is grey, not white.** §4 says "zero at white".
+White is the light-mode surface, so a zero cell would have disappeared into
+the card, and in dark mode there is no white to diverge from at all. The
+midpoint is now the neutral grey the palette specifies for each mode (light
+`#f0efec`, dark `#383835`). Cells within 4% of the largest difference are
+snapped to that midpoint deliberately: at eight participants a one-point gap
+is not a finding, and a faint tint invites reading it as one.
+
+**2. Per-cell proportions are dots, not bars, and the axes are swapped.**
+§4 puts nine cells on the x-axis. Nine categorical labels on the x-axis at
+phone width either rotate or truncate; cells run down the y-axis instead, and
+each series is a dot with its interval drawn through it. Bars with error bars
+would have needed a zero baseline per cell and three times the ink for the
+same nine comparisons.
+
+**3. The agreement matrix is a table, not a 3 × 3 grid.** With three sources
+there are exactly three pairs. A matrix of three filled cells and three
+mirrored duplicates is a table wearing a costume — the anti-pattern is a chart
+where the number is the point. The split-half ceilings ride along as their own
+column, which is where they are actually read.
+
+**4. Colours were re-derived, and the display's are wrong.** The categorical
+slots used here (`#3987e5`/`#d95926`/`#199e70` dark, blue swapped to `#2a78d6`
+light) were chosen by running the palette validator against this app's own
+surfaces. The display's existing overlay hues — tap `#5b8cff`, gaze `#b06bff`,
+model `#ff7a45` — fail it: blue against purple separates by ΔE 1.5 under
+deutan simulation and 13.2 with normal colour vision, below the floor of 15.
+Roughly one man in twelve cannot tell the tapped layer from the measured layer
+on the projected screen. Realigning the display to the validated slots is a
+separate change, not yet made.
+
+**5. There is no filter row.** Grid size and blur are query parameters on the
+endpoint (`?grid=4&sigma=0.25`), clamped rather than validated so a stray URL
+cannot take the page down mid-session. They are not exposed as controls
+because §6 has not yet decided the grid, and a control implies the decision is
+the viewer's to make.
+
+The page refuses to overstate what it has: it names the model panel as
+synthetic whenever the run is a placeholder, says so when a group has fewer
+than four people and the ceiling cannot be estimated, and reports excluded
+calibrations rather than dropping them. §5's "should wait" and "blocked"
+items are unchanged — no inferential test is computed, and every model number
+on the page is still a number about noise.

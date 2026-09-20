@@ -177,6 +177,12 @@ def page_gazetest():
     return _page("gazetest.html")
 
 
+@app.get("/charts", include_in_schema=False)
+def page_charts():
+    """The comparison charts: tapped vs measured vs model, side by side."""
+    return _page("charts.html")
+
+
 @app.get("/healthz", include_in_schema=False)
 def healthz():
     return {"ok": True}
@@ -514,6 +520,43 @@ def api_compare(grid: int = 3):
         "gaze": paths["gaze"],
         "model": [p for p in model_paths if p],
     }, grid=max(2, min(5, grid)))
+    result["conditions"] = db.assignment_counts(round_["id"])
+    result["gaze_excluded"] = paths["gaze_excluded"]
+    result["model_source"] = run.get("source") if run else None
+    return result
+
+
+@app.get("/api/compare/maps")
+def api_compare_maps(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT):
+    """Per-participant density maps for the three sources, on one scale.
+
+    Separate from /api/compare because it answers a different question. That
+    one scores agreement on pooled points; this one returns the maps the
+    charts draw, each built per participant and smoothed with one shared
+    kernel so the panels are actually comparable (SPEC-METRICS.md section 2).
+    """
+    round_ = db.get_active_round()
+    if not round_:
+        return {"ok": False, "reason": "no round open"}
+
+    paths = _condition_paths(round_["id"])
+    cfg = model_config()
+    run = (db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"],
+                            cfg["n_fixations"])
+           or db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"]))
+    model_paths = (run.get("samples_norm") or [run.get("scanpath_norm")]) if run else []
+
+    result = analysis.comparison_maps(
+        {
+            "tapped": paths["tap"],
+            "measured": paths["gaze"],
+            "model": [p for p in model_paths if p],
+        },
+        n=max(2, min(5, grid)),
+        sigma=max(0.05, min(0.4, sigma)),
+    )
+    result["image"] = db.get_image(round_["image_id"])
+    result["config"] = cfg
     result["conditions"] = db.assignment_counts(round_["id"])
     result["gaze_excluded"] = paths["gaze_excluded"]
     result["model_source"] = run.get("source") if run else None

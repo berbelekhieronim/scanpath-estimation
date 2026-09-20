@@ -423,3 +423,161 @@ def compare_sources(sources: dict, grid: int = 3, seed: int = 0) -> dict:
             },
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Comparable density maps (SPEC-METRICS.md)
+# ---------------------------------------------------------------------------
+
+FINE = 32          # working resolution before aggregating to the coarse grid
+SIGMA_DEFAULT = 0.21   # worst source's measurement error, as a fraction of width
+
+
+def _fine_map(points: Points, sigma: float) -> np.ndarray:
+    """One participant's points as a smoothed density, summing to 1."""
+    from scipy.ndimage import gaussian_filter
+
+    grid = np.zeros((FINE, FINE), dtype=float)
+    for x, y in points:
+        gx = min(FINE - 1, max(0, int(x * FINE)))
+        gy = min(FINE - 1, max(0, int(y * FINE)))
+        grid[gy, gx] += 1.0
+    if grid.sum() == 0:
+        return grid
+    sm = gaussian_filter(grid, sigma=max(0.5, sigma * FINE), mode="constant")
+    total = sm.sum()
+    return sm / total if total else sm
+
+
+def _to_coarse(fine: np.ndarray, n: int) -> np.ndarray:
+    """Aggregate the fine map down to an n x n grid."""
+    edges = [round(i * FINE / n) for i in range(n + 1)]
+    out = np.zeros(n * n, dtype=float)
+    for r in range(n):
+        for c in range(n):
+            out[r * n + c] = fine[edges[r]:edges[r + 1], edges[c]:edges[c + 1]].sum()
+    return out
+
+
+def participant_maps(paths: List[Path], n: int = 3,
+                     sigma: float = SIGMA_DEFAULT) -> np.ndarray:
+    """One coarse density map per participant, each summing to 1.
+
+    Per participant, not pooled. Someone who produced nineteen gaze samples
+    must not outweigh someone who produced nine — the unit of observation is
+    the person (SPEC-METRICS.md section 1).
+    """
+    maps = [_to_coarse(_fine_map(p, sigma), n) for p in paths if p]
+    return np.array([m for m in maps if m.sum() > 0]) if maps else np.empty((0, n * n))
+
+
+def group_map(paths: List[Path], n: int = 3, sigma: float = SIGMA_DEFAULT) -> dict:
+    """Mean density map across participants, with per-cell intervals."""
+    mats = participant_maps(paths, n, sigma)
+    if not len(mats):
+        return {"cells": [0.0] * (n * n), "ci": [[0.0, 0.0]] * (n * n), "n": 0}
+
+    mean = mats.mean(axis=0)
+    if len(mats) > 1:
+        sem = mats.std(axis=0, ddof=1) / np.sqrt(len(mats))
+        lo = np.clip(mean - 1.96 * sem, 0, 1)
+        hi = np.clip(mean + 1.96 * sem, 0, 1)
+    else:
+        lo = hi = mean
+    return {
+        "cells": mean.tolist(),
+        "ci": [[float(a), float(b)] for a, b in zip(lo, hi)],
+        "n": int(len(mats)),
+    }
+
+
+def correlate(a: Sequence[float], b: Sequence[float]) -> Optional[float]:
+    """Pearson correlation between two density maps.
+
+    The saliency literature's CC. Symmetric, so neither side is treated as
+    ground truth — which is the whole point here.
+    """
+    x, y = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    if x.size < 3 or np.allclose(x, x[0]) or np.allclose(y, y[0]):
+        return None
+    r = float(np.corrcoef(x, y)[0, 1])
+    return None if np.isnan(r) else r
+
+
+def split_half(paths: List[Path], n: int = 3, sigma: float = SIGMA_DEFAULT,
+               seed: int = 0, repeats: int = 40) -> Optional[float]:
+    """How well a group agrees with itself — the ceiling for any comparison.
+
+    Averaged over repeated random splits, because a single split of ten people
+    is noisy enough to mislead.
+    """
+    mats = participant_maps(paths, n, sigma)
+    if len(mats) < 4:
+        return None
+    rng = np.random.default_rng(seed)
+    scores = []
+    for _ in range(repeats):
+        order = rng.permutation(len(mats))
+        half = len(order) // 2
+        a = mats[order[:half]].mean(axis=0)
+        b = mats[order[half:]].mean(axis=0)
+        r = correlate(a, b)
+        if r is not None:
+            scores.append(r)
+    return float(np.mean(scores)) if scores else None
+
+
+def comparison_maps(sources: dict, n: int = 3,
+                    sigma: float = SIGMA_DEFAULT, seed: int = 0) -> dict:
+    """Everything the charts need, in one shape.
+
+    All sources are smoothed with the SAME kernel, sized to the worst source's
+    error. Comparing a sharp map with a blurry one and calling the difference
+    disagreement is the mistake this prevents.
+    """
+    present = {k: v for k, v in sources.items() if v}
+    if len(present) < 1:
+        return {"ok": False, "reason": "no data yet"}
+
+    maps = {k: group_map(v, n, sigma) for k, v in present.items()}
+    ceilings = {k: split_half(v, n, sigma, seed) for k, v in present.items()}
+
+    pairs = {}
+    labels = list(present)
+    for i, a in enumerate(labels):
+        for bl in labels[i + 1:]:
+            r = correlate(maps[a]["cells"], maps[bl]["cells"])
+            ceil_a, ceil_b = ceilings.get(a), ceilings.get(bl)
+            ref = max([c for c in (ceil_a, ceil_b) if c is not None], default=None)
+            pairs[f"{a}|{bl}"] = {
+                "cc": r,
+                # Against the ceiling, not against 1.0: no comparison can be
+                # expected to beat how well a group agrees with itself.
+                "of_ceiling": (r / ref) if (r is not None and ref and ref > 0) else None,
+            }
+
+    # Difference map, only where both sides exist.
+    difference = None
+    if "measured" in maps and "tapped" in maps:
+        difference = (np.array(maps["measured"]["cells"])
+                      - np.array(maps["tapped"]["cells"])).tolist()
+
+    centre = (n // 2) * n + (n // 2)
+    return {
+        "ok": True,
+        "grid": n,
+        "sigma": sigma,
+        "maps": maps,
+        "ceilings": ceilings,
+        "pairs": pairs,
+        "difference": difference,
+        "centre_bias": {k: maps[k]["cells"][centre] for k in maps},
+        "baselines": {
+            "random": {k: correlate(
+                group_map([random_points(12, seed) for _ in range(8)], n, sigma)["cells"],
+                maps[k]["cells"]) for k in maps},
+            "centre": {k: correlate(
+                group_map([centre_bias_points(12, seed) for _ in range(8)], n, sigma)["cells"],
+                maps[k]["cells"]) for k in maps},
+        },
+    }

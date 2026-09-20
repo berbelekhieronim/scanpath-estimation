@@ -242,6 +242,39 @@ Disagreement is evidence people are poor introspectors about where they look.
 
 ---
 
+## 5b. The comparison charts
+
+**`/charts`** — open it in a second tab or on a second screen. It is the
+between-groups view: where the tappers said they would look, where the
+tracked group actually looked, and where the model says they should have,
+as three grids on one colour scale.
+
+Read it in this order:
+
+1. **The three panels.** Same scale, same blur, so a darker cell always means
+   more attention. Each panel is averaged per person, so someone who produced
+   thirty gaze samples does not outweigh someone who produced nine.
+2. **The difference map.** Measured minus tapped. Red is where people looked
+   more than they said; blue is where they said more than they looked. This
+   is the picture the talk rests on.
+3. **The dot plot.** The same numbers with 95% intervals. Where two groups'
+   intervals do not overlap, the gap is unlikely to be noise. Wide intervals
+   mean few people, not a strong result.
+4. **The agreement table.** Each pair's correlation against the ceiling — how
+   well a group agrees with *itself*, split in half. The "% of ceiling" column
+   is the honest figure; the raw correlation alone is not.
+
+It refreshes every five seconds, so it can be left open while the session
+runs. It says so on the page when the model run is synthetic, when a group has
+fewer than four people, and how many calibrations were excluded.
+
+`?grid=4` or `?sigma=0.25` change the grid and the blur if you want to see how
+sensitive the picture is. **Do not present a grid finer than 3 × 3**: webcam
+gaze on a phone is accurate to about a fifth of the screen width, which is
+three resolvable columns and no more.
+
+---
+
 ## 6. Live inference during the talk (optional)
 
 To run the model in front of the audience, from the Mac:
