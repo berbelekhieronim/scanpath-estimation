@@ -640,6 +640,56 @@ climb — and the climb is the whole question.
 drops below roughly 8 fps the calibration windows will need lengthening. That
 trade is worth making: a slow calibration is usable, a dead tab is not.
 
+### 13.10 It works — first real calibration, 2026-09-20
+
+The CPU backend fixed it. First successful calibration on a real phone:
+
+```
+grade: usable · 9/9 points accepted · face 100% · 67 frames
+peak 336 tensors / 61.2 MB · freed 36 tensors
+```
+
+**Confirms the WebGL diagnosis.** Peak memory reached 61.2 MB against the
+26.4 MB it died at on point five, so the load did roughly double over the
+remaining points — exactly the growing-batch pattern predicted. On CPU that is
+simply more typed-array memory; on WebGL it was textures, and iOS killed the
+tab for it.
+
+**9 of 9 points accepted**, so the debounce and proximity handling around
+`handleClick()` is working and nothing was silently dropped.
+
+**Grade *usable* is the first real accuracy measurement this project has.** It
+puts mean validation error between 0.18 and 0.30 of viewport width, which
+lands squarely where §2.2 predicted from the literature: roughly three
+resolvable columns across a phone screen. The coarse-grid analysis in §6 is
+the right design, and the mean-shift AOIs would have been fantasy.
+
+#### The new problem: frame rate
+
+**67 frames across a ~18-second calibration is about 3.7 fps.** The same
+counter read 104 frames by point five on WebGL, around 13 fps, so the CPU
+backend costs roughly a 3.5x slowdown.
+
+That is survivable for calibration — the targets are static and each window
+only needs a few samples — but it matters for W3. A 3-second viewing window at
+3.7 fps yields about **11 gaze samples**, against the ~10 Hz §9 assumed. Three
+consequences:
+
+1. **Lengthen the viewing window** from 3 s to 5 s, giving ~18 samples. This
+   conflicts slightly with the model's "free viewing for 3 seconds" prompt,
+   and that tension should be stated rather than hidden.
+2. **Fixation detection is not viable at this rate.** 4 Hz cannot separate
+   fixations from saccades. W3 should store raw samples and treat the
+   aggregate spatially, dropping the `gaze_fixations` table from §9 until
+   there is a reason for it.
+3. **A possible optimisation, not yet attempted:** the crash was in `adapt()`,
+   during calibration. Plain inference is a single forward pass over one eye
+   patch and never allocated the large transient batches. So WebGL might be
+   safe for the viewing stage even though it is not for calibration. The
+   obstacle is that `setBackend` does not migrate existing weights, so the
+   model would have to be reloaded between stages — worth trying only if 4 Hz
+   proves too thin in practice.
+
 ### 13.5 Verified, and not
 
 Driven end to end in a headless browser against the mock backend: consent flow
