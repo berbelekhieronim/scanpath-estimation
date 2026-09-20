@@ -83,7 +83,9 @@ def test_validation_samples_the_window_before_the_tap():
     sampling afterwards measures drift and scores it as error."""
     src = (STATIC / "gaze" / "calibration.js").read_text()
     block = src[src.index("PHASE.VALIDATING"):src.index("this._setPhase(PHASE.DONE)")]
-    assert "await this._awaitTap();\n        const mean = this._recentMean" in block
+    # The reading is taken immediately after the tap resolves, from the
+    # window that ended at the tap — not from anything sampled later.
+    assert "await this._awaitTap();\n        const m = this._recentPoint" in block
 
 
 # --- quality grading -------------------------------------------------------

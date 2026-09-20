@@ -38,6 +38,10 @@ export const VALIDATION_POINTS = [
 /* A gain outside this band is not a measurement, it is one bad sample. */
 export const GAIN_LIMITS = [0.45, 2.2];
 
+/* How far a validation window may disagree with itself, as a fraction of the
+   viewport, before the point is treated as noise rather than a reading. */
+export const MAX_SPREAD = 0.25;
+
 /* Invert the fit: from what the tracker said back to where the eye was.
  *
  * Exported because the viewing stage has to apply exactly the same
@@ -171,14 +175,34 @@ export class Calibration {
     };
   }
 
-  _recentMean(sinceMs) {
+  /* The middle of the recent window, not its average.
+   *
+   * At the frame rate this runs at, a 700ms window holds two or three
+   * predictions. A mean over three samples moves most of the way toward a
+   * single bad one — a half-blink, a frame where the face was half out of
+   * shot — and these three measurements are what the offset and gain
+   * corrections are fitted to, so one of them being wrong tilts the whole
+   * recording. The median of three ignores it entirely.
+   *
+   * The spread comes back too: a point whose samples disagree with each
+   * other is not a measurement of anything, and the fit drops it.
+   */
+  _recentPoint(sinceMs) {
     const cut = performance.now() - sinceMs;
     const pts = this.samples.filter((s) => s.wall >= cut);
     if (!pts.length) return null;
-    return [
-      pts.reduce((a, s) => a + s.x, 0) / pts.length,
-      pts.reduce((a, s) => a + s.y, 0) / pts.length,
-    ];
+
+    const mid = (xs) => {
+      const a = xs.slice().sort((p, q) => p - q);
+      const h = a.length >> 1;
+      return a.length % 2 ? a[h] : (a[h - 1] + a[h]) / 2;
+    };
+    const xs = pts.map((s) => s.x), ys = pts.map((s) => s.y);
+    const point = [mid(xs), mid(ys)];
+    // Largest distance from the middle: how much the window disagreed.
+    const spread = Math.max(...pts.map((s) =>
+      Math.hypot(s.x - point[0], s.y - point[1])));
+    return { point, spread, n: pts.length };
   }
 
   async run() {
@@ -267,10 +291,13 @@ export class Calibration {
         // This also matches what the tracker does for calibration, which
         // adapts on the frame at click time.
         await this._awaitTap();
-        const mean = this._recentMean(this.sampleMs);
+        const m = this._recentPoint(this.sampleMs);
+        const mean = m ? m.point : null;
         this.validation.push({
           target,
           measured: mean,
+          samples: m ? m.n : 0,
+          spread: m ? +m.spread.toFixed(4) : null,
           error: mean ? Math.hypot(mean[0] - target[0], mean[1] - target[1]) : null,
         });
         this.onProgress({ validated: this.validation.length,
@@ -309,8 +336,16 @@ export class Calibration {
    * Only the SHARED component is removed. Scatter around it is genuine
    * measurement error and stays in the numbers.
    */
+  /* Validation points steady enough to fit anything to. A point whose own
+     window disagreed with itself by more than this is measuring the moment,
+     not the eye. */
+  _usable() {
+    return this.validation.filter((v) =>
+      v.measured && (v.spread == null || v.spread <= MAX_SPREAD));
+  }
+
   bias() {
-    const pts = this.validation.filter((v) => v.measured);
+    const pts = this._usable();
     if (pts.length < 2) return null;
     const dx = pts.reduce((a, v) => a + (v.measured[0] - v.target[0]), 0) / pts.length;
     const dy = pts.reduce((a, v) => a + (v.measured[1] - v.target[1]), 0) / pts.length;
@@ -332,8 +367,13 @@ export class Calibration {
    * plausible band falls back to the offset-only correction.
    */
   fit() {
-    const pts = this.validation.filter((v) => v.measured);
-    if (pts.length < 3) return null;
+    const pts = this._usable();
+    if (pts.length < 3) {
+      // Not enough steady points to fit a slope. An offset still works on
+      // two, and is better than no correction at all.
+      const b = this.bias();
+      return b ? { gain: [1, 1], offset: b, gainUsed: false } : null;
+    }
 
     const axis = (i) => {
       const t = pts.map((v) => v.target[i]);

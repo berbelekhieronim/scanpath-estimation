@@ -715,3 +715,50 @@ def test_navigation_carries_the_control_token():
     js = (STATIC / "nav.js").read_text()
     assert "scanpath_control_token" in js
     assert "token: true" in js
+
+
+@pytest.mark.skipif(NODE is None, reason="node is needed to run the module")
+def test_one_bad_frame_does_not_move_the_validation_reading():
+    """A 700ms window holds two or three predictions at this frame rate. A
+    mean over three moves most of the way toward a single half-blink, and
+    these readings are what both corrections are fitted to."""
+    script = """
+    import('file://%s').then(m => {
+      const C = Object.create(m.Calibration.prototype);
+      C.samples = [{x:0.50,y:0.50,wall:1e12},{x:0.52,y:0.48,wall:1e12},
+                   {x:0.95,y:0.05,wall:1e12}];
+      performance.now = () => 1e12;
+      const r = C._recentPoint(700);
+      console.log(JSON.stringify({point: r.point, spread: r.spread, n: r.n}));
+    });
+    """ % (CALIB_JS,)
+    out = subprocess.run([NODE, "--input-type=module", "-e", script],
+                         capture_output=True, text=True, check=True)
+    r = json.loads(out.stdout)
+    assert r["n"] == 3
+    # The median ignores the outlier; a mean would have said 0.657.
+    assert r["point"][0] == pytest.approx(0.52, abs=0.001)
+    assert r["spread"] > 0.5           # and the disagreement is reported
+
+
+@pytest.mark.skipif(NODE is None, reason="node is needed to run the module")
+def test_a_validation_point_that_disagrees_with_itself_is_not_fitted():
+    """It is measuring the moment, not the eye."""
+    script = """
+    import('file://%s').then(m => {
+      const C = Object.create(m.Calibration.prototype);
+      C.validation = m.VALIDATION_POINTS.map((t, i) => ({
+        target: t, measured: [t[0] + 0.05, t[1] - 0.02],
+        spread: i === 0 ? 0.6 : 0.05 }));
+      const f = C.fit();
+      console.log(JSON.stringify({usable: C._usable().length,
+        gainUsed: f.gainUsed, offset: f.offset}));
+    });
+    """ % (CALIB_JS,)
+    out = subprocess.run([NODE, "--input-type=module", "-e", script],
+                         capture_output=True, text=True, check=True)
+    r = json.loads(out.stdout)
+    assert r["usable"] == 2
+    # Two points can still carry an offset, which beats no correction.
+    assert r["gainUsed"] is False
+    assert r["offset"][0] == pytest.approx(0.05, abs=0.001)
