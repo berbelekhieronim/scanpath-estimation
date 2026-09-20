@@ -155,6 +155,16 @@ def page_start():
     return _page("start.html")
 
 
+@app.get("/consent", include_in_schema=False)
+def page_consent():
+    return _page("consent.html")
+
+
+@app.get("/calibrate", include_in_schema=False)
+def page_calibrate():
+    return _page("calibrate.html")
+
+
 @app.get("/gazetest", include_in_schema=False)
 def page_gazetest():
     """Phase W1 diagnostic: does webcam gaze tracking work on this device?"""
@@ -437,6 +447,57 @@ def api_submit_markers(sub: Submission, request: Request):
     )
     n = db.save_markers(active["id"], participant_id, sub.points)
     return {"saved": n, "round_id": active["id"], "responses": db.count_responses(active["id"])}
+
+
+class GazeSession(BaseModel):
+    participant_uuid: str = Field(min_length=8, max_length=64)
+    grade: str
+    tracker: Optional[str] = None
+    tracker_version: Optional[str] = None
+    mean_error: Optional[float] = None
+    worst_error: Optional[float] = None
+    points_accepted: Optional[int] = None
+    points_total: Optional[int] = None
+    validation: Optional[list] = None
+    viewport_w: Optional[int] = None
+    viewport_h: Optional[int] = None
+    device_label: Optional[str] = None
+    failure: Optional[str] = None
+
+    @field_validator("grade")
+    @classmethod
+    def known_grade(cls, v):
+        if v not in ("good", "usable", "poor", "failed"):
+            raise ValueError("grade must be good, usable, poor or failed")
+        return v
+
+
+@app.post("/api/gaze/session")
+def api_gaze_session(session: GazeSession, request: Request):
+    """Record a calibration result, passed or failed.
+
+    Failures are stored deliberately. The proportion of participants whose
+    tracking did not work is a number the presenter has to be able to report;
+    discarding failures would make every other figure look better than it is.
+    """
+    round_ = db.get_active_round()
+    participant_id = db.upsert_participant(
+        session.participant_uuid, request.headers.get("user-agent"))
+    payload = session.model_dump()
+    session_id = db.create_gaze_session(
+        participant_id, round_["id"] if round_ else None, payload)
+    return {
+        "session_id": session_id,
+        "grade": session.grade,
+        "usable": session.grade in ("good", "usable"),
+        "stats": db.gaze_session_stats(round_["id"] if round_ else None),
+    }
+
+
+@app.get("/api/gaze/stats")
+def api_gaze_stats():
+    round_ = db.get_active_round()
+    return db.gaze_session_stats(round_["id"] if round_ else None)
 
 
 @app.get("/api/join-url")

@@ -38,6 +38,9 @@ export class GazeTrackerBase {
 
   async start() { throw new Error('not implemented'); }
   stop() { throw new Error('not implemented'); }
+
+  /** Teach the tracker that the eye is on (x, y), both 0..1 top-left. */
+  async calibratePoint(_x, _y) { throw new Error('not implemented'); }
 }
 
 
@@ -47,13 +50,23 @@ export class GazeTrackerBase {
 
 export class WebEyeTrackBackend extends GazeTrackerBase {
   /** @param {HTMLVideoElement} videoEl - must already be in the DOM with an id */
-  constructor(videoEl, { scriptUrl = '/static/vendor/webeyetrack/webeyetrack.umd.js' } = {}) {
+  constructor(videoEl, {
+    scriptUrl = '/static/vendor/webeyetrack/webeyetrack.umd.js',
+    maxPoints = 16,
+  } = {}) {
     super();
     this.videoEl = videoEl;
     this.scriptUrl = scriptUrl;
+    // WebEyeTrack's maxPoints DEFAULTS TO 5, and pruneCalibData() keeps only
+    // the most recent that many. A nine-point calibration built on the
+    // default would silently throw away the first four points and report a
+    // confident, wrong model. Verified in upstream's WebEyeTrack.ts.
+    this.maxPoints = maxPoints;
     this.name = 'webeyetrack';
     this.version = '0.0.2';
     this._t0 = 0;
+    this._lastCalibAt = 0;
+    this._lastCalibPt = null;
   }
 
   async _loadLibrary() {
@@ -92,7 +105,7 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
       // WebEyeTrack (main thread), not WebEyeTrackProxy: the worker bundle
       // the Proxy needs is missing from the published package. See
       // vendor/webeyetrack/VENDORED.md.
-      this.wet = new lib.WebEyeTrack();
+      this.wet = new lib.WebEyeTrack(this.maxPoints);
       await this.wet.initialize();   // BlazeGaze weights + MediaPipe FaceLandmarker
 
       this._setStatus(STATUS.PERMISSION);
@@ -140,6 +153,33 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     };
   }
 
+  /* Upstream's handleClick() silently drops a point if it lands within
+   * 1000 ms OR within 0.05 units of the previous one. Both are easy to trip
+   * with an impatient participant, and a dropped point is invisible — so the
+   * caller is told whether the point was actually taken. */
+  async calibratePoint(x, y) {
+    if (!this.wet || !this.wet.latestGazeResult) {
+      return { accepted: false, reason: 'no face detected right now' };
+    }
+    const now = Date.now();
+    const nx = x - 0.5, ny = y - 0.5;   // to the tracker's centre-origin space
+
+    if (now - this._lastCalibAt < 1100) {
+      return { accepted: false, reason: 'too soon after the previous point' };
+    }
+    if (this._lastCalibPt &&
+        Math.abs(nx - this._lastCalibPt[0]) < 0.06 &&
+        Math.abs(ny - this._lastCalibPt[1]) < 0.06) {
+      return { accepted: false, reason: 'too close to the previous point' };
+    }
+
+    await this.wet.handleClick(nx, ny);
+    this._lastCalibAt = now;
+    this._lastCalibPt = [nx, ny];
+    return { accepted: true, points: this.wet.calibData
+      ? this.wet.calibData.supportX.length : null };
+  }
+
   stop() {
     try { this.cam && this.cam.stopWebcam(); } catch {}
     // Belt and braces: WebcamClient should release the stream, but a camera
@@ -167,12 +207,17 @@ export class MockBackend extends GazeTrackerBase {
    * Noise is injected at roughly the error the real tracker reports, so
    * anything built against it meets realistic data rather than a clean signal.
    */
-  constructor({ noise = 0.035, hz = 30 } = {}) {
+  constructor({ noise = 0.035, hz = 30, bias = [0.09, -0.06] } = {}) {
     super();
     this.name = 'mock';
     this.version = '1';
     this.noise = noise;
     this.hz = hz;
+    // A systematic offset that calibration removes, so the quality gate is
+    // exercised against something that actually improves rather than a
+    // signal that was already perfect.
+    this.bias = bias.slice();
+    this._calibrated = 0;
     this._pos = { x: 0.5, y: 0.5 };
     this._onMove = (e) => {
       const p = e.touches ? e.touches[0] : e;
@@ -190,15 +235,21 @@ export class MockBackend extends GazeTrackerBase {
     this._t0 = performance.now();
     this._timer = setInterval(() => {
       const g = () => (Math.random() + Math.random() + Math.random() - 1.5) * this.noise;
+      const shrink = Math.max(0, 1 - this._calibrated / 9);
       this.onSample({
-        x: Math.min(1, Math.max(0, this._pos.x + g())),
-        y: Math.min(1, Math.max(0, this._pos.y + g())),
+        x: Math.min(1, Math.max(0, this._pos.x + g() + this.bias[0] * shrink)),
+        y: Math.min(1, Math.max(0, this._pos.y + g() + this.bias[1] * shrink)),
         t: performance.now() - this._t0,
         state: 'open',
         ok: true,
       });
     }, 1000 / this.hz);
     this._setStatus(STATUS.RUNNING);
+  }
+
+  async calibratePoint() {
+    this._calibrated += 1;
+    return { accepted: true, points: this._calibrated };
   }
 
   stop() {

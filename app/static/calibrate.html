@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Calibrating — where do you look?</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  .cal { position: fixed; inset: 0; touch-action: manipulation;
+         -webkit-user-select: none; user-select: none;
+         -webkit-tap-highlight-color: transparent; }
+
+  .banner { position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+            padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+            text-align: center; pointer-events: none; }
+  .banner h1 { margin: 0 0 3px; font-size: 1rem; font-weight: 600; }
+  .banner p { margin: 0; color: var(--muted); font-size: 0.8125rem; }
+
+  .progress { position: absolute; left: 16px; right: 16px; z-index: 3;
+              bottom: calc(14px + env(safe-area-inset-bottom));
+              display: flex; gap: 4px; pointer-events: none; }
+  .pip { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
+  .pip.done { background: var(--accent); }
+  .pip.valid { background: var(--ok); }
+
+  /* The target. Concentric rings give the eye something precise to land on —
+     a plain disc lets gaze drift to its edge. */
+  .target { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px;
+            border-radius: 50%; display: grid; place-items: center; z-index: 2;
+            transition: left .28s cubic-bezier(.4,0,.2,1), top .28s cubic-bezier(.4,0,.2,1);
+            cursor: pointer; }
+  .target::before { content: ''; position: absolute; inset: 0; border-radius: 50%;
+                    border: 2px solid var(--accent); opacity: .5; }
+  .target::after { content: ''; width: 14px; height: 14px; border-radius: 50%;
+                   background: var(--accent); box-shadow: 0 0 0 4px rgba(91,140,255,.22); }
+  .target.validating::before { border-color: var(--ok); }
+  .target.validating::after { background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.22); }
+  .target.hidden { display: none; }
+  .target .pulse { position: absolute; inset: -6px; border-radius: 50%;
+                   border: 2px solid var(--accent); animation: pulse 1.4s ease-out infinite; }
+  @keyframes pulse { from { transform: scale(.85); opacity: .7 } to { transform: scale(1.25); opacity: 0 } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; opacity: .3 } }
+
+  .overlay { position: absolute; inset: 0; z-index: 4; display: grid;
+             place-items: center; text-align: center; padding: 26px;
+             background: var(--bg); }
+  .overlay.hidden { display: none; }
+  .overlay h2 { margin: 0 0 10px; font-size: 1.375rem; }
+  .overlay p { margin: 0 0 8px; color: var(--muted); max-width: 400px; }
+  .overlay .big { font-size: 3rem; line-height: 1; margin-bottom: 14px; }
+  .overlay button { margin-top: 18px; padding: 14px 26px; font-size: 1rem; }
+  .grade { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
+           font-weight: 700; padding: 4px 12px; border-radius: 999px;
+           display: inline-block; margin-bottom: 12px; }
+  .grade.good { background: var(--ok); color: #05261a; }
+  .grade.usable { background: var(--warn); color: #241a00; }
+  .grade.poor, .grade.failed { background: var(--danger); color: #fff; }
+
+  video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<div class="cal" id="cal">
+  <video id="cam" autoplay playsinline muted></video>
+
+  <div class="banner" id="banner">
+    <h1 id="title">Setting up</h1>
+    <p id="hint">Hold the phone comfortably and keep still.</p>
+  </div>
+
+  <div class="target hidden" id="target"><div class="pulse"></div></div>
+  <div class="progress" id="progress"></div>
+
+  <div class="overlay" id="overlay">
+    <div>
+      <h2 id="ov-title">Let's measure where you look</h2>
+      <p id="ov-body">
+        You'll see a dot move around the screen. <strong>Look straight at it,
+        then tap it.</strong> Nine times, then four quick checks.
+      </p>
+      <p style="font-size:.8125rem">Hold the phone still, at comfortable reading
+        distance, and try to keep it there throughout.</p>
+      <button class="primary" id="ov-btn">Start</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
+import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS } from '/static/gaze/calibration.js';
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const USE_MOCK = params.get('mock') === '1';
+const UUID_KEY = 'scanpath_participant_uuid';
+
+function participantUuid() {
+  let id = localStorage.getItem(UUID_KEY);
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) ||
+         ('p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 11));
+    localStorage.setItem(UUID_KEY, id);
+  }
+  return id;
+}
+
+let tracker = null, calib = null, attempts = 0;
+
+function overlay(title, bodyHtml, btnLabel, onClick) {
+  $('ov-title').textContent = title;
+  $('ov-body').innerHTML = bodyHtml;
+  const btn = $('ov-btn');
+  btn.textContent = btnLabel;
+  btn.onclick = onClick;
+  btn.style.display = btnLabel ? '' : 'none';
+  $('overlay').classList.remove('hidden');
+}
+const hideOverlay = () => $('overlay').classList.add('hidden');
+
+function renderProgress(done, total, kind) {
+  $('progress').innerHTML = Array.from({ length: total }, (_, i) =>
+    `<span class="pip ${i < done ? (kind === 'validation' ? 'valid' : 'done') : ''}"></span>`
+  ).join('');
+}
+
+async function begin() {
+  attempts++;
+  hideOverlay();
+  $('title').textContent = 'Starting the camera';
+  $('hint').textContent = 'Allow the camera prompt if it appears.';
+
+  tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'));
+  tracker.onStatus = (status, err) => {
+    if (status === STATUS.ERROR) {
+      overlay('The camera could not start', `<p>${err || ''}</p>`,
+              'Skip this part', () => { location.href = '/?nocamera=1'; });
+    }
+  };
+
+  try {
+    await tracker.start();
+  } catch { return; }
+
+  calib = new Calibration(tracker, {
+    onPhase: (phase) => {
+      if (phase === PHASE.WAITING_FOR_FACE) {
+        $('title').textContent = 'Looking for your face';
+        $('hint').textContent = 'Hold the phone in front of you, with some light on your face.';
+      } else if (phase === PHASE.CALIBRATING) {
+        $('title').textContent = 'Look at the dot, then tap it';
+        $('hint').textContent = 'Nine of these. Keep the phone still.';
+      } else if (phase === PHASE.VALIDATING) {
+        $('title').textContent = 'Checking the result';
+        $('hint').textContent = 'Four more — look, then tap. Hold your gaze a moment.';
+      }
+    },
+    onPoint: (i, total, xy, kind) => {
+      renderProgress(i, total, kind);
+      const t = $('target');
+      t.classList.remove('hidden');
+      t.classList.toggle('validating', kind === 'validation');
+      t.style.left = (xy[0] * 100) + '%';
+      t.style.top = (xy[1] * 100) + '%';
+    },
+  });
+
+  // Tapping anywhere counts — a participant aiming at a 64px target while
+  // also trying to hold their gaze on it will miss, and a missed tap that
+  // does nothing reads as the app being broken.
+  $('cal').addEventListener('pointerdown', (e) => {
+    if (!$('overlay').classList.contains('hidden')) return;
+    e.preventDefault();
+    calib.tap();
+  });
+
+  const result = await calib.run();
+  $('target').classList.add('hidden');
+  await report(result);
+}
+
+async function report(result) {
+  tracker.stop();
+  const pct = result.meanError == null ? null : Math.round(result.meanError * 100);
+
+  try {
+    await fetch('/api/gaze/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        participant_uuid: participantUuid(),
+        grade: result.grade,
+        tracker: result.tracker,
+        tracker_version: result.trackerVersion,
+        mean_error: result.meanError,
+        worst_error: result.worstError,
+        points_accepted: result.pointsAccepted,
+        points_total: result.pointsTotal,
+        validation: result.validation,
+        viewport_w: window.innerWidth,
+        viewport_h: window.innerHeight,
+        device_label: navigator.userAgent.slice(0, 120),
+        failure: result.failure,
+      }),
+    });
+  } catch { /* the result still gets shown; storage is best-effort here */ }
+
+  const badge = `<span class="grade ${result.grade}">${result.grade}</span>`;
+
+  if (result.failure === 'no_face') {
+    overlay('We could not see your face',
+      `${badge}<p>The camera never found a face. The usual reason is not enough
+       light — a dark room defeats it.</p>`,
+      attempts < 2 ? 'Try again' : 'Continue without', 
+      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+    return;
+  }
+
+  if (result.ok) {
+    overlay('Calibrated',
+      `${badge}<p>Typical error about <strong>${pct}%</strong> of the screen
+       across the four checks.</p>
+       <p style="font-size:.8125rem">That is the expected range for a phone
+       camera. It is enough to tell broad regions apart, not fine detail.</p>`,
+      'Continue', () => { location.href = '/?calibrated=1'; });
+  } else {
+    overlay('Tracking is not accurate enough',
+      `${badge}<p>Typical error about <strong>${pct ?? '—'}%</strong> of the
+       screen, which is too high to use.</p>
+       <p style="font-size:.8125rem">More light on your face, holding the phone
+       steadier, and keeping it at a constant distance all help.</p>`,
+      attempts < 2 ? 'Try again' : 'Continue without',
+      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+  }
+}
+
+$('ov-btn').onclick = begin;
+renderProgress(0, CALIB_POINTS.length, 'calibration');
+
+window.addEventListener('pagehide', () => tracker && tracker.stop());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && tracker) tracker.stop();
+});
+</script>
+</body>
+</html>

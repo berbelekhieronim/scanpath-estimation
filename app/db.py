@@ -100,6 +100,7 @@ def connect() -> Iterator[sqlite3.Connection]:
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
+    init_gaze()
 
 
 # --------------------------------------------------------------------------
@@ -390,3 +391,89 @@ def sync_model_runs_from_disk() -> dict:
         loaded.append(path.name)
 
     return {"loaded": loaded, "orphaned": orphaned, "invalid": invalid}
+
+
+# --------------------------------------------------------------------------
+# gaze sessions (webcam capture)
+# --------------------------------------------------------------------------
+
+GAZE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS gaze_sessions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id          INTEGER REFERENCES rounds(id),
+    participant_id    INTEGER NOT NULL REFERENCES participants(id),
+    started_at        TEXT    NOT NULL,
+    tracker           TEXT,
+    tracker_version   TEXT,
+    grade             TEXT,     -- good | usable | poor | failed
+    mean_error        REAL,     -- fraction of viewport width
+    worst_error       REAL,
+    points_accepted   INTEGER,
+    points_total      INTEGER,
+    validation_json   TEXT,
+    viewport_w        INTEGER,
+    viewport_h        INTEGER,
+    device_label      TEXT,
+    excluded          INTEGER NOT NULL DEFAULT 0,
+    exclusion_reason  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_gaze_sessions_round ON gaze_sessions(round_id);
+"""
+
+
+def init_gaze() -> None:
+    with connect() as conn:
+        conn.executescript(GAZE_SCHEMA)
+
+
+def create_gaze_session(participant_id: int, round_id: Optional[int],
+                        payload: dict) -> int:
+    """Record a calibration outcome.
+
+    A failed calibration is stored, not discarded: the exclusion rate is a
+    reportable number (spec section 5.1), and it cannot be reported if the
+    failures were never written down.
+    """
+    import json
+
+    grade = payload.get("grade")
+    excluded = 0 if grade in ("good", "usable") else 1
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO gaze_sessions (round_id, participant_id, started_at, "
+            "tracker, tracker_version, grade, mean_error, worst_error, "
+            "points_accepted, points_total, validation_json, viewport_w, "
+            "viewport_h, device_label, excluded, exclusion_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                round_id, participant_id, utcnow(),
+                payload.get("tracker"), payload.get("tracker_version"), grade,
+                payload.get("mean_error"), payload.get("worst_error"),
+                payload.get("points_accepted"), payload.get("points_total"),
+                json.dumps(payload.get("validation") or []),
+                payload.get("viewport_w"), payload.get("viewport_h"),
+                (payload.get("device_label") or "")[:120],
+                excluded,
+                None if not excluded else (payload.get("failure") or grade),
+            ),
+        )
+        return cur.lastrowid
+
+
+def gaze_session_stats(round_id: Optional[int]) -> dict:
+    """Counts for the presenter: how many tracked, how many were excluded."""
+    with connect() as conn:
+        if round_id is None:
+            return {"total": 0, "usable": 0, "excluded": 0, "grades": {}}
+        rows = conn.execute(
+            "SELECT grade, excluded, COUNT(*) AS n FROM gaze_sessions "
+            "WHERE round_id = ? GROUP BY grade, excluded", (round_id,)
+        ).fetchall()
+    grades, total, excluded = {}, 0, 0
+    for r in rows:
+        grades[r["grade"] or "unknown"] = grades.get(r["grade"] or "unknown", 0) + r["n"]
+        total += r["n"]
+        if r["excluded"]:
+            excluded += r["n"]
+    return {"total": total, "usable": total - excluded, "excluded": excluded,
+            "grades": grades}

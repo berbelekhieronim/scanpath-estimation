@@ -86,10 +86,22 @@ def test_adapter_uses_the_main_thread_class_not_the_proxy():
     """WebEyeTrackProxy needs index.worker.js, which the published package
     does not contain. Using it would fail at runtime."""
     src = (STATIC / "gaze" / "tracker.js").read_text()
-    assert "new lib.WebEyeTrack()" in src
-    assert "WebEyeTrackProxy" not in src.split("/*")[0] + src.split("*/")[-1] or True
+    assert re.search(r"new\s+lib\.WebEyeTrack\s*\(", src)
     # The proxy must not actually be constructed anywhere.
     assert not re.search(r"new\s+\w*\.?WebEyeTrackProxy\s*\(", src)
+
+
+def test_tracker_is_constructed_with_an_explicit_max_points():
+    """WebEyeTrack's maxPoints defaults to 5 and pruneCalibData() keeps only
+    the most recent that many. A 9-point calibration on the default would
+    silently discard the first four and report a confident, wrong model."""
+    src = (STATIC / "gaze" / "tracker.js").read_text()
+    m = re.search(r"new\s+lib\.WebEyeTrack\s*\(\s*([^)]+?)\s*\)", src)
+    assert m and m.group(1).strip(), "must pass maxPoints explicitly"
+
+    default = re.search(r"maxPoints\s*=\s*(\d+)", src)
+    assert default and int(default.group(1)) >= 9, \
+        "maxPoints must hold at least the 9 calibration points"
 
 
 def test_adapter_reads_globals_off_window_not_a_namespace():

@@ -319,8 +319,8 @@ tap route, so Stage 1 stays as light as it is now.
 
 | Phase | Deliverable | Gate |
 |---|---|---|
-| **W1** | Tracker adapter interface + WebEyeTrack behind it; a bare test page showing a live gaze dot | **A dot follows your eye on a phone.** Everything else is moot until this works in the room — **built, gate not yet met, see §12** |
-| **W2** | Consent screen, 9-point calibration, validation scoring, quality gate | A participant can calibrate and be told whether it worked |
+| **W1** | Tracker adapter interface + WebEyeTrack behind it; a bare test page showing a live gaze dot | **Gate MET on a real phone, 2026-09-20** — dot tracks, face-found and FPS both above threshold, all dependencies reachable |
+| **W2** | Consent screen, 9-point calibration, validation scoring, quality gate | **Built, see §13.** Verified end to end against the mock backend; untested against a real eye |
 | **W3** | Stage 3 viewing, sampling, batch upload, session storage | Gaze data lands in the database with a quality score |
 | **W4** | Coarse-grid analysis, measured-gaze display layer, exclusion reporting | The room's measured heatmap appears on the projector |
 | **W5** | Three-way comparison (tapped / measured / model) and the per-participant two-panel result | The headline claim |
@@ -413,3 +413,82 @@ above ~80%; does FPS hold above ~8. Absolute position will be off before
 calibration (W2) — W1 is about whether the signal exists at all, not where it
 lands. Try it with the room lights down as well as up, since that is the
 condition that most likely defeats it.
+
+---
+
+## 13. W2 as built
+
+`/consent` then `/calibrate`, with the calibration state machine in
+`app/static/gaze/calibration.js` — deliberately independent of any tracker, so
+the mock backend drives it in tests and a camera drives it in the room.
+
+### 13.1 A silent data-loss bug in the tracker's defaults
+
+`WebEyeTrack`'s constructor takes `maxPoints`, **which defaults to 5**, and
+`pruneCalibData()` keeps only that many most-recent points. A nine-point
+calibration built on the default would have **silently discarded the first
+four points** and then reported a confident, wrong model — no error, no
+warning, just a worse fit than the progress bar implied.
+
+The adapter now constructs it with an explicit `maxPoints` of 16, and a test
+asserts both that an argument is passed and that it is at least 9.
+
+Two related behaviours in `handleClick()` also needed handling: it drops a
+point silently if it arrives within 1000 ms of the previous one, or within
+0.05 units of it. The calibration grid is spaced to clear the proximity
+filter, the adapter enforces the interval, and a dropped point is retried once
+rather than ignored — otherwise the model is weaker than the progress
+indicator claims.
+
+### 13.2 Validation samples before the tap, not after
+
+Found by a failure-path test that would not fail. Sampling gaze *after* the
+confirming tap measures wherever the participant drifted to once nothing held
+their attention on the target, and scores that drift as tracker error. The
+window now taken is the one immediately **preceding** the tap, which is the
+only moment we know they were looking at it — and it matches what the tracker
+itself does for calibration, adapting on the frame at click time.
+
+### 13.3 Quality gating
+
+Four validation points, none of them a calibration point, scored as mean
+Euclidean error in fractions of viewport width:
+
+| Grade | Mean error | Outcome |
+|---|---|---|
+| good | ≤ 0.18 | used |
+| usable | ≤ 0.30 | used |
+| poor | > 0.30 | excluded, one retry offered |
+| failed | no face, or no samples | excluded, one retry offered |
+
+**These thresholds are starting values, not measurements.** The literature puts
+webcam error near 4°, which on a phone is about a third of the screen, so
+"good" here is already coarse. Tune them once there is real session data.
+
+Failed calibrations are **stored, not discarded**. The proportion of the room
+whose tracking did not work is a number the presenter has to be able to state;
+it cannot be stated if the failures were never written down. `/api/gaze/stats`
+returns total, usable and excluded counts for the current round.
+
+### 13.4 Consent
+
+Five plain statements — processed on the device, no video uploaded, only
+coordinates shared, no identity, camera released afterwards — with declining
+presented as an equal-weight button that keeps the participant in the demo.
+The choice is remembered locally so nobody is asked twice.
+
+### 13.5 Verified, and not
+
+Driven end to end in a headless browser against the mock backend: consent flow
+and storage, all 9 calibration and 4 validation targets appearing at 13
+distinct positions, tapping anywhere counting as a confirmation, grading,
+retry on failure, camera release, and storage of both a passing and a failing
+session with the exclusion counted.
+
+Discriminates correctly: a simulated participant looking straight at each
+target grades *good*; one whose gaze sits ~150 px off grades *poor* and is
+offered a retry.
+
+**Untested against a real eye.** No camera here. In particular the real
+tracker's post-calibration accuracy — the number the whole gate depends on —
+is unknown until someone runs `/consent` on a phone.
