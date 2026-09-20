@@ -15,8 +15,16 @@ export const CALIB_POINTS = [
   [0.15, 0.85], [0.50, 0.85], [0.85, 0.85],
 ];
 
-// Validation points sit between the calibration points, never on them —
-// scoring on a point the model was trained on measures memorisation.
+/* Validation points sit between the calibration points, never on them —
+ * scoring on a point the model was trained on measures memorisation.
+ *
+ * Three, not more: twelve taps in total was already reported as feeling long
+ * on a phone. Three is also enough for what the correction needs, which is
+ * two distinct target levels on each axis — these give x in {0.32, 0.68} and
+ * y in {0.32, 0.68}. That is the minimum that can measure a *gain* and not
+ * just an offset, and gain is the one that matters: the usual webcam failure
+ * is not that predictions are shifted but that they huddle toward the middle
+ * of the screen, which no offset can fix. */
 export const VALIDATION_POINTS = [
   [0.32, 0.32], [0.68, 0.68], [0.68, 0.32],
 ];
@@ -27,6 +35,23 @@ export const VALIDATION_POINTS = [
  * error near 4 degrees, which on a phone is about a third of the screen, so
  * "good" here is already coarse. Tune them on real sessions before trusting
  * the gate — see SPEC-WEBCAM.md section 5.1. */
+/* A gain outside this band is not a measurement, it is one bad sample. */
+export const GAIN_LIMITS = [0.45, 2.2];
+
+/* Invert the fit: from what the tracker said back to where the eye was.
+ *
+ * Exported because the viewing stage has to apply exactly the same
+ * correction the calibration measured. Two copies of this arithmetic would
+ * eventually disagree, and the disagreement would look like tracker noise.
+ */
+export function applyFit(measured, fit) {
+  if (!fit) return measured;
+  return [
+    (measured[0] - fit.offset[0]) / (fit.gain[0] || 1),
+    (measured[1] - fit.offset[1]) / (fit.gain[1] || 1),
+  ];
+}
+
 export const QUALITY = {
   GOOD: 0.18,
   USABLE: 0.30,
@@ -292,6 +317,58 @@ export class Calibration {
     return [dx, dy];
   }
 
+  /* A per-axis straight line from where the eye was to where the tracker said
+   * it was, fitted on the validation points and then inverted to correct.
+   *
+   * The offset alone cannot fix the usual failure, which is not that the
+   * predictions are shifted but that they are *squashed*: the eye sweeps the
+   * whole screen and the tracker reports a huddle near the middle. That is a
+   * gain below one, and it needs two distinct target levels per axis to see
+   * at all — which is why there are four validation points.
+   *
+   * Refuses to correct a gain it cannot believe. With four samples a single
+   * bad one can produce an absurd slope, and multiplying the real data by an
+   * absurd slope is far worse than leaving it alone, so anything outside a
+   * plausible band falls back to the offset-only correction.
+   */
+  fit() {
+    const pts = this.validation.filter((v) => v.measured);
+    if (pts.length < 3) return null;
+
+    const axis = (i) => {
+      const t = pts.map((v) => v.target[i]);
+      const m = pts.map((v) => v.measured[i]);
+      const tBar = t.reduce((a, x) => a + x, 0) / t.length;
+      const mBar = m.reduce((a, x) => a + x, 0) / m.length;
+      let cov = 0, varT = 0;
+      for (let k = 0; k < t.length; k++) {
+        cov += (t[k] - tBar) * (m[k] - mBar);
+        varT += (t[k] - tBar) ** 2;
+      }
+      // No spread in the targets, or a slope that would amplify noise more
+      // than it removes error: keep the offset, drop the gain.
+      const gain = varT > 1e-6 ? cov / varT : 1;
+      const usable = gain >= GAIN_LIMITS[0] && gain <= GAIN_LIMITS[1];
+      const g = usable ? gain : 1;
+      return { gain: g, offset: mBar - g * tBar, gainUsed: usable };
+    };
+
+    const x = axis(0), y = axis(1);
+    // All or nothing. One bad validation sample skews both axes, so a gain
+    // that is implausible on either is evidence the whole set is untrustworthy
+    // — not a reason to keep the half that happens to look reasonable.
+    const gainUsed = x.gainUsed && y.gainUsed;
+    if (!gainUsed) {
+      const b = this.bias() || [0, 0];
+      return { gain: [1, 1], offset: b, gainUsed: false };
+    }
+    return {
+      gain: [x.gain, y.gain],
+      offset: [x.offset, y.offset],
+      gainUsed: true,
+    };
+  }
+
   result(failure = null) {
     const errs = this.validation.map((v) => v.error).filter((e) => e != null);
     const meanError = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
@@ -301,9 +378,10 @@ export class Calibration {
     // honest figure for what the corrected data can resolve; meanError stays
     // as the uncorrected measurement.
     const b = this.bias();
-    const residuals = b ? this.validation.filter((v) => v.measured).map((v) =>
-      Math.hypot(v.measured[0] - b[0] - v.target[0],
-                 v.measured[1] - b[1] - v.target[1])) : [];
+    const f = this.fit();
+    const residuals = f ? this.validation.filter((v) => v.measured).map((v) =>
+      Math.hypot(applyFit(v.measured, f)[0] - v.target[0],
+                 applyFit(v.measured, f)[1] - v.target[1])) : [];
     const residualError = residuals.length
       ? residuals.reduce((a, x) => a + x, 0) / residuals.length : null;
     const grade = failure ? 'failed'
@@ -314,6 +392,7 @@ export class Calibration {
       failure,
       diagnostics: this.diagnostics(),
       bias: b,
+      fit: f,
       residualError,
       meanError,
       worstError,

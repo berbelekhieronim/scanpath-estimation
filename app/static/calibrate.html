@@ -61,6 +61,10 @@
   .rotate-guard > div { margin: auto; }
   .rotate-guard.hidden { display: none; }
   .rotate-guard .icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .linky { background: none; border: 0; color: var(--muted); font: inherit;
+           font-size: 0.8125rem; text-decoration: underline; padding: 6px;
+           cursor: pointer; }
+  .linky:hover { color: var(--text); }
   .rotate-guard p { color: var(--muted); max-width: 32ch; margin: 0 auto; }
 
   /* Centred AND scrollable. `place-items: center` alone clips the top of
@@ -193,12 +197,16 @@
     <p id="rg-body">The setup was measured with the phone the other way up.
        Turning it changes where everything is on screen, so the measurement
        no longer fits. Turn it back and this will carry on by itself.</p>
+    <p id="rg-escape" hidden style="margin-top:14px">
+      <button id="rg-skip" class="linky">Carry on sideways anyway</button>
+    </p>
   </div>
 </div>
 
 <script type="module">
 import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
-import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS } from '/static/gaze/calibration.js';
+import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS, applyFit }
+  from '/static/gaze/calibration.js';
 import { deviceInfo } from '/static/device.js';
 import { track as trackViewport, viewport, onChange as onViewportChange,
          isHandset } from '/static/gaze/viewport.js';
@@ -235,6 +243,11 @@ let gazeSessionId = null;
 /* Systematic offset measured at the validation points, subtracted from every
    viewing sample. See Calibration.bias(). */
 let gazeBias = [0, 0];
+/* The correction measured at validation: where the tracker said the eye was,
+   mapped back to where it actually was. Offset and, when the validation
+   points support one, gain — because the usual failure is not a shift but a
+   squash toward the middle of the screen. */
+let gazeFit = null;
 
 /* Crash-resilient reporting.
  *
@@ -320,7 +333,9 @@ function clearCrumb() { try { localStorage.removeItem(CRUMB_KEY); } catch {} }
  * one screen shape. Rotating after it is fitted makes it wrong silently, in
  * a way that reads as ordinary inaccuracy, so the run pauses rather than
  * recording samples that would look like data. */
-const REQUIRED = isHandset() ? 'portrait' : null;
+// ?portrait=off is the manual override, for a device the check gets wrong.
+const REQUIRED = (params.get('portrait') !== 'off' && isHandset())
+  ? 'portrait' : null;
 let lockedOrientation = null;
 let paused = false;
 
@@ -343,6 +358,8 @@ const GUARD_COPY = {
           + 'Turn it back and this carries on.'],
 };
 
+let escapeTimer = null;
+
 function applyOrientationGuard() {
   const problem = orientationProblem(viewport());
   paused = !!problem;
@@ -352,14 +369,34 @@ function applyOrientationGuard() {
     $('rg-body').textContent = body;
   }
   $('rotate-guard').classList.toggle('hidden', !problem);
+
+  /* Nobody gets permanently stuck. If the guard is still up after a few
+     seconds — a device the check reads wrongly, a tablet that will not
+     rotate, a browser lying about its screen — a way past appears. One
+     sideways recording is a far smaller loss than one participant who could
+     not take part at all, and a live room has no time to debug it. */
+  clearTimeout(escapeTimer);
+  $('rg-escape').hidden = true;
+  if (problem === 'required') {
+    escapeTimer = setTimeout(() => { $('rg-escape').hidden = false; }, 7000);
+  }
   return problem;
 }
 
-onViewportChange((now, before) => {
+function skipOrientationCheck() {
+  const url = new URL(location.href);
+  url.searchParams.set('portrait', 'off');
+  crumb('orientation-override');
+  location.replace(url);
+}
+
+onViewportChange((now) => {
   const was = paused;
   const problem = applyOrientationGuard();
   if (problem && !was) crumb('orientation-blocked', { problem, to: now.orientation });
 });
+
+$('rg-skip').addEventListener('click', skipOrientationCheck);
 
 // Checked on load, not only after calibration starts: arriving sideways
 // showed the intro at 290px tall with the Start button pushed off it.
@@ -504,6 +541,7 @@ async function begin() {
 
 async function report(result) {
   if (result.bias) gazeBias = result.bias;
+  if (result.fit) gazeFit = result.fit;
   // Deliberately NOT stopping the tracker here. When calibration succeeds the
   // viewing stage runs next on this same page and needs the camera still
   // live; stopping it here is what produced a recording of zero samples.
@@ -524,6 +562,7 @@ async function report(result) {
         worst_error: result.worstError,
         residual_error: result.residualError,
         bias: result.bias,
+        fit: result.fit,
         points_accepted: result.pointsAccepted,
         points_total: result.pointsTotal,
         validation: result.validation,
@@ -635,8 +674,9 @@ function toImageCoords(s) {
   const r = $('vframe').getBoundingClientRect();
   if (!r.width || !r.height) return null;
   // Remove the shared offset before mapping onto the image.
-  const vx = s.x - gazeBias[0];
-  const vy = s.y - gazeBias[1];
+  const [vx, vy] = gazeFit
+    ? applyFit([s.x, s.y], gazeFit)
+    : [s.x - gazeBias[0], s.y - gazeBias[1]];
   // The same measured box the layout is built from. Using innerWidth and
   // innerHeight here while the page is sized to visualViewport would stretch
   // every sample against a box the participant cannot see.

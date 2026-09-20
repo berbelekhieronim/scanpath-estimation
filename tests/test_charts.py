@@ -8,7 +8,10 @@ person (SPEC-METRICS.md section 1).
 """
 
 import importlib
+import json
 import re
+import shutil
+import subprocess
 import tempfile
 import sys
 from pathlib import Path
@@ -492,12 +495,17 @@ def test_handsets_must_be_upright_but_laptops_are_exempt():
     it would turn a fix into an outage."""
     js = VIEWPORT_JS.read_text()
     assert "export function isHandset()" in js
+    # Three independent signals, all required, because a false positive locks
+    # someone out of the study on a machine where landscape is correct.
     assert "maxTouchPoints" in js
+    assert "(pointer: coarse)" in js
     # Measured on the short edge, which does not change when rotated.
     assert "Math.min(screen.width || 0, screen.height || 0)" in js
+    # Anything unexpected about the browser means no constraint at all.
+    assert "} catch {" in js and "return false;" in js
 
     page = CALIBRATE.read_text()
-    assert "const REQUIRED = isHandset() ? 'portrait' : null;" in page
+    assert "isHandset()" in page and "'portrait'" in page
     assert "Turn your phone upright" in page
 
 
@@ -518,7 +526,7 @@ def test_the_orientation_guard_runs_after_its_dependencies_exist():
     page = CALIBRATE.read_text()
     dollar = page.index("const $ = (id) => document.getElementById(id);")
     assert page.index("function applyOrientationGuard()") > dollar
-    assert page.index("const REQUIRED = isHandset()") > dollar
+    assert page.index("const REQUIRED = ") > dollar
 
 
 def test_orientation_is_recorded_with_the_calibration(client):
@@ -599,3 +607,83 @@ def test_start_page_labels_do_not_run_together():
     page = (STATIC / "start.html").read_text()
     assert ".link .txt { display: flex; flex-direction: column;" in page
     assert '<span class="txt">' in page
+
+
+def test_nobody_can_be_permanently_locked_out_by_the_orientation_check():
+    """A live room has no time to debug a device the check reads wrongly.
+    One sideways recording is a far smaller loss than one participant who
+    could not take part at all."""
+    page = CALIBRATE.read_text()
+    assert "params.get('portrait') !== 'off'" in page       # manual override
+    assert "rg-escape" in page and "skipOrientationCheck" in page
+    # The way out appears on its own, without anyone knowing the URL trick.
+    assert "setTimeout(() => { $('rg-escape').hidden = false; }, 7000)" in page
+    # Only for the "must be upright" case — a rotation mid-run is the
+    # participant's own doing and turning back is the actual fix.
+    assert "if (problem === 'required')" in page
+
+
+# --- the gaze correction --------------------------------------------------
+
+NODE = shutil.which("node")
+CALIB_JS = STATIC / "gaze" / "calibration.js"
+
+
+def run_fit(measured_of):
+    """Exercise the real correction arithmetic, not a description of it.
+
+    String-matching the source would pass just as happily on a fit that
+    inverted the gain, and this is the one piece of maths standing between a
+    squashed tracker and the numbers the whole study reports.
+    """
+    script = """
+    import('file://%s').then(m => {
+      const C = Object.create(m.Calibration.prototype);
+      C.validation = m.VALIDATION_POINTS.map(t => ({target: t, measured: (%s)(t)}));
+      const fit = C.fit();
+      const bias = C.bias();
+      const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+      const errWith = (f) => mean(C.validation.map((v) => {
+        const c = f ? m.applyFit(v.measured, f) : v.measured;
+        return Math.hypot(c[0] - v.target[0], c[1] - v.target[1]);
+      }));
+      const offsetOnly = mean(C.validation.map((v) =>
+        Math.hypot(v.measured[0] - bias[0] - v.target[0],
+                   v.measured[1] - bias[1] - v.target[1])));
+      console.log(JSON.stringify({gain: fit.gain, gainUsed: fit.gainUsed,
+        raw: errWith(null), corrected: errWith(fit), offsetOnly}));
+    });
+    """ % (CALIB_JS, measured_of)
+    out = subprocess.run([NODE, "--input-type=module", "-e", script],
+                         capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is needed to run the module")
+def test_the_correction_undoes_a_tracker_that_squashes_toward_the_centre():
+    """The classic webcam failure: the eye sweeps the screen, the tracker
+    reports a huddle near the middle. An offset cannot touch it — here it
+    makes things very slightly worse — and a gain fixes it outright."""
+    r = run_fit("(t) => [0.5 + (t[0]-0.5)*0.6 + 0.04, 0.5 + (t[1]-0.5)*0.6 - 0.03]")
+    assert r["gainUsed"] is True
+    assert r["gain"][0] == pytest.approx(0.6, abs=0.01)
+    assert r["corrected"] < 0.001
+    assert r["offsetOnly"] > r["raw"] * 0.95      # offset alone achieves nothing
+
+
+@pytest.mark.skipif(NODE is None, reason="node is needed to run the module")
+def test_a_pure_offset_is_still_corrected():
+    """The case that already worked must not regress."""
+    r = run_fit("(t) => [t[0] + 0.08, t[1] - 0.05]")
+    assert r["corrected"] < 0.001
+    assert r["gain"][0] == pytest.approx(1.0, abs=0.05)
+
+
+@pytest.mark.skipif(NODE is None, reason="node is needed to run the module")
+def test_one_wild_sample_never_rescales_the_real_data():
+    """Multiplying a whole recording by a slope fitted to one bad tap is far
+    worse than leaving it alone, so an implausible gain is refused on both
+    axes — not just the one that looks wrong."""
+    r = run_fit("(t) => (t[0] < 0.4 && t[1] < 0.4) ? [0.95, 0.02] : [t[0], t[1]]")
+    assert r["gainUsed"] is False
+    assert r["gain"] == [1, 1]

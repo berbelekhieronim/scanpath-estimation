@@ -82,9 +82,27 @@ export function track() {
  * and nothing else. Measured on the short edge of the physical screen, which
  * does not change when the device is rotated. */
 export function isHandset() {
-  const touch = (navigator.maxTouchPoints || 0) > 0;
-  const shortEdge = Math.min(screen.width || 0, screen.height || 0);
-  return touch && shortEdge > 0 && shortEdge <= 500;
+  try {
+    // Three independent signals, all required. A false positive locks
+    // someone out of the study on a machine where landscape is correct, so
+    // the test is deliberately hard to trip: a desktop needs to fail all
+    // three, and does.
+    const touch = (navigator.maxTouchPoints || 0) > 0;
+    // Primary input is a finger. A laptop with a touchscreen still reports
+    // a fine pointer, because its primary input is the trackpad.
+    const coarse = window.matchMedia
+      && window.matchMedia('(pointer: coarse)').matches;
+    // Physical screen, not the window, and the short edge, which does not
+    // change when the device is rotated.
+    const shortEdge = Math.min(screen.width || 0, screen.height || 0);
+    const small = shortEdge > 0 && shortEdge <= 500;
+    return !!(touch && coarse && small);
+  } catch {
+    // Anything unexpected about this browser means no constraint. Being
+    // wrong in this direction costs one landscape recording; being wrong in
+    // the other costs a participant entirely.
+    return false;
+  }
 }
 
 /** Notified on every real change, with (current, previous). */

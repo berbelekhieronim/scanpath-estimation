@@ -707,6 +707,9 @@ class GazeSession(BaseModel):
     diagnostics: Optional[dict] = None
     residual_error: Optional[float] = None
     bias: Optional[list[float]] = None
+    # Per-axis gain and offset measured at the validation points. Recorded so
+    # a session can be re-derived later knowing exactly what was corrected.
+    fit: Optional[dict] = None
 
     @field_validator("grade")
     @classmethod

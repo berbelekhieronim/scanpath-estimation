@@ -483,8 +483,9 @@ def create_gaze_session(participant_id: int, round_id: Optional[int],
                 payload.get("points_accepted"), payload.get("points_total"),
                 json.dumps(payload.get("validation") or []),
                 json.dumps({**(payload.get("diagnostics") or {}),
-                            **({"orientation": payload["orientation"]}
-                               if payload.get("orientation") else {})}),
+                            **{k: payload[k] for k in ("orientation", "fit",
+                                                       "residual_error")
+                               if payload.get(k) is not None}}),
                 payload.get("viewport_w"), payload.get("viewport_h"),
                 (payload.get("device_label") or "")[:120],
                 excluded,

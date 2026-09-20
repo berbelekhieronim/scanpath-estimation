@@ -48,7 +48,9 @@ def _points(name):
 def test_calibration_and_validation_point_counts():
     """Nine calibration points because the tracker's few-shot adaptation
     expects that many. Three validation points because twelve taps total was
-    already reported as feeling long on a phone."""
+    already reported as feeling long on a phone — and because three is
+    enough: they give two distinct target levels on each axis, which is the
+    minimum that can measure a gain rather than only an offset."""
     assert len(_points("CALIB_POINTS")) == 9
     assert len(_points("VALIDATION_POINTS")) == 3
     total = len(_points("CALIB_POINTS")) + len(_points("VALIDATION_POINTS"))
