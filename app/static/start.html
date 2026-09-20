@@ -49,8 +49,12 @@
     text-decoration: none; color: inherit; transition: border-color .12s;
   }
   .link:hover { border-color: var(--accent); }
+  /* Both were inline spans, so the name and its description rendered as one
+     run-together word: "ControlsLayers, capture mode, image, model". The
+     margin-top below had no effect on an inline box either. */
+  .link .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .link .nm { font-weight: 600; }
-  .link .ds { color: var(--muted); font-size: 0.8125rem; margin-top: 2px; }
+  .link .ds { color: var(--muted); font-size: 0.8125rem; }
   .link .pth { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
                font-size: 0.75rem; color: var(--accent); white-space: nowrap; }
   .link.locked { opacity: .55; }
@@ -141,7 +145,7 @@ function renderLinks() {
         : it.path;
       return `<a class="link ${needs ? 'locked' : ''}" href="${href}"
                  ${it.raw ? '' : 'target="_blank" rel="noopener"'}>
-          <span><span class="nm">${it.nm}</span><span class="ds">${it.ds}</span></span>
+          <span class="txt"><span class="nm">${it.nm}</span><span class="ds">${it.ds}</span></span>
           <span class="pth">${needs ? 'needs token' : it.path}</span>
         </a>`;
     }).join('');

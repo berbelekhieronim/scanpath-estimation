@@ -534,3 +534,68 @@ def test_orientation_is_recorded_with_the_calibration(client):
     assert r.status_code == 200
     sess = db.get_gaze_session(r.json()["session_id"])
     assert _json.loads(sess["diagnostics_json"])["orientation"] == "landscape"
+
+
+def test_a_stray_assignment_does_not_discard_unassigned_tappers(client):
+    """The old rule kept only assigned tappers and fell back to "everyone"
+    when the table was completely empty. One phone merely opening the
+    participant page flipped that fallback off and silently dropped every
+    tapper who had already submitted."""
+    for i in range(3):
+        tap(client, f"tapper-{i:04d}", CENTRE)
+    # Somebody else is assigned, but never submits anything.
+    client.post("/api/assign", json={"participant_uuid": "bystander-0001"})
+
+    body = client.get("/api/compare/maps").json()
+    assert body["maps"]["tapped"]["n"] == 3
+
+
+def test_a_gaze_participant_is_never_counted_as_a_tapper(client):
+    """The one reason to drop someone holding markers."""
+    client.post("/api/control/capture-mode", json={"mode": "gaze"}, headers=AUTH)
+    client.post("/api/assign", json={"participant_uuid": "gazer-0001"})
+    tap(client, "gazer-0001", CENTRE)          # should not count
+    client.post("/api/control/capture-mode", json={"mode": "tap"}, headers=AUTH)
+    client.post("/api/assign", json={"participant_uuid": "tapper-0001"})
+    tap(client, "tapper-0001", TOP_LEFT)
+
+    body = client.get("/api/compare/maps").json()
+    assert body["maps"]["tapped"]["n"] == 1
+
+
+# --- the grid drawn onto the picture --------------------------------------
+
+def test_the_grid_is_translucent_over_the_picture():
+    """Opaque cells hide the thing they describe, which defeats the point of
+    drawing them on the picture rather than beside it."""
+    module = (STATIC / "charts.js").read_text()
+    assert "o.fillOpacity ??" in module
+    page = (STATIC / "display.html").read_text()
+    assert "fillOpacity: 0.46" in page
+
+
+def test_every_chart_grid_sits_over_the_scene():
+    """Asked for explicitly: a cell should read as a part of the picture, not
+    as an abstract square."""
+    page = (STATIC / "charts.html").read_text()
+    assert "densityPanels(d, {aspect, image: scene})" in page
+    assert "differenceMap(d, {image: scene, aspect})" in page
+
+
+def test_the_grid_source_is_switchable_and_validated(client):
+    for src in ("tapped", "measured", "model"):
+        r = client.post("/api/control/grid-source", json={"source": src},
+                        headers=AUTH)
+        assert r.status_code == 200
+        assert client.get("/api/state").json()["grid_source"] == src
+    bad = client.post("/api/control/grid-source", json={"source": "guesses"},
+                      headers=AUTH)
+    assert bad.status_code == 422
+
+
+def test_start_page_labels_do_not_run_together():
+    """Both were inline spans, so every link read "ControlsLayers, capture
+    mode, image, model" with no break between name and description."""
+    page = (STATIC / "start.html").read_text()
+    assert ".link .txt { display: flex; flex-direction: column;" in page
+    assert '<span class="txt">' in page

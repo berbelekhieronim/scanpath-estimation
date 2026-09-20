@@ -99,7 +99,7 @@ class LAYERS:
 
     KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
             "prompt": "0", "json": "0", "gaze": "0", "gaze_paths": "0",
-            "charts": "0"}
+            "charts": "0", "grid": "0"}
 
     # Each of these takes over the whole screen, so two of them on at once
     # means one is silently hidden behind the other. Enforced here rather than
@@ -302,6 +302,7 @@ def api_status(request: Request):
     return {
         "server": _server_freshness(),
         "capture_mode": db.get_state("capture_mode", "tap"),
+        "grid_source": db.get_state("grid_source", "tapped"),
         "conditions": conditions,
         "gaze": {
             "sessions": gaze["total"],
@@ -340,6 +341,7 @@ def api_state():
         "responses": counts,
         "layers": LAYERS.current(),
         "capture_mode": db.get_state("capture_mode", "tap"),
+        "grid_source": db.get_state("grid_source", "tapped"),
     }
 
 
@@ -408,6 +410,30 @@ def api_set_capture_mode(payload: dict, _: str = Depends(require_token)):
                             detail="mode must be tap, gaze or mixed")
     db.set_state("capture_mode", mode)
     return {"mode": mode}
+
+
+class GridSource(BaseModel):
+    source: str
+
+    @field_validator("source")
+    @classmethod
+    def known(cls, v):
+        if v not in ("tapped", "measured", "model"):
+            raise ValueError("source must be tapped, measured or model")
+        return v
+
+
+@app.post("/api/control/grid-source")
+def api_set_grid_source(payload: GridSource, _: str = Depends(require_token)):
+    """Which group the on-image attention grid draws.
+
+    A separate setting from the layer toggle: the presenter switches between
+    the two human groups on the same picture, which is the comparison the
+    whole demo is for, and that should not mean turning a layer off and a
+    different one on.
+    """
+    db.set_state("grid_source", payload.source)
+    return {"grid_source": payload.source}
 
 
 @app.get("/api/probes")
@@ -515,10 +541,13 @@ def _condition_paths(round_id: int) -> dict:
     for r in db.get_round_markers(round_id):
         by_participant.setdefault(r["participant_id"], []).append([r["x"], r["y"]])
 
-    # With no assignments at all (tap-only mode from before the split),
-    # every tapper counts as the tap group rather than vanishing.
-    tap_paths = [v for k, v in by_participant.items()
-                 if not tap_ids and not gaze_ids or k in tap_ids]
+    # Markers only ever come from tapping, so anyone holding markers tapped.
+    # The only reason to drop one is an explicit assignment to the other
+    # group. The previous rule kept only assigned tappers, falling back to
+    # "everyone" when the assignment table was completely empty — so a single
+    # stray assignment (one phone opening the participant page) flipped it and
+    # silently discarded every tapper who had submitted without one.
+    tap_paths = [v for k, v in by_participant.items() if k not in gaze_ids]
 
     gaze = db.round_gaze_points(round_id)
     return {"tap": tap_paths, "gaze": gaze["paths"],

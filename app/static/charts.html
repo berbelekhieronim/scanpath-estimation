@@ -177,7 +177,7 @@ async function load() {
   const aspect = (d.image && d.image.width && d.image.height)
     ? d.image.width / d.image.height : 1;
 
-  put('panels', densityPanels(d, {aspect}));
+  put('panels', densityPanels(d, {aspect, image: scene}));
   put('panel-scale', sequentialScale());
   const diff = differenceMap(d, {image: scene, aspect});
   $('diff-section').hidden = !diff;

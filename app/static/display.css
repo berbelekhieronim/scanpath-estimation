@@ -289,3 +289,12 @@ body.has-experimental .display { padding-bottom: 40px; }
 .analysis .scope .excl {
   color: var(--warn); font-size: 0.9em; margin-left: 4px;
 }
+
+
+/* The attention grid, drawn onto the picture rather than beside it. Sits
+   above the density clouds but below the scanpaths, so a path stays readable
+   across a cell boundary. */
+#grid {
+  position: absolute; inset: 0; z-index: 4; pointer-events: none;
+}
+#grid svg { width: 100%; height: 100%; display: block; }

@@ -26,6 +26,7 @@
       <svg id="model" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
       <canvas id="gaze"></canvas>
       <svg id="gazepaths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div id="grid" hidden></div>
     </div>
   </div>
 
@@ -40,6 +41,7 @@
 import { drawHeatmap } from '/static/heatmap.js';
 import {
   densityPanels, sequentialScale, differenceMap, legendRow, MORE_IS, OVERLAY,
+  gridSvg, seqColour, SERIES,
 } from '/static/charts.js';
 
 const $ = (id) => document.getElementById(id);
@@ -137,6 +139,15 @@ function renderExplain(state, taps, gaze, run) {
   if (L.gaze_paths && gaze.contributors) on.push(kn('gaze',
     `<strong>Orange traces</strong>: each of their eye paths, starting at the
      pale ring`));
+  if (L.grid) {
+    const src = state.grid_source || 'tapped';
+    const who = {tapped: 'the people who tapped',
+                 measured: 'the eye-tracked group',
+                 model: 'the model'}[src] || src;
+    on.push(kn(src === 'measured' ? 'gaze' : src === 'model' ? 'model' : 'tap',
+      `<strong>Grid</strong>: each part labelled with the share of attention
+       it drew from ${who}`));
+  }
   if (L.model && run) on.push(kn('model',
     `<strong>Green numbered path</strong>: what the model predicts a human
      would do`));
@@ -201,6 +212,63 @@ function renderModel(run, show) {
   svg.innerHTML = ghosts + `<polyline points="${line}" fill="none"
       stroke="${OVERLAY.model}" stroke-width="3.5" stroke-linejoin="round"
       stroke-linecap="round" vector-effect="non-scaling-stroke"/>` + dots;
+}
+
+/* The attention grid, drawn straight onto the picture.
+ *
+ * The same coarse grid the charts use, at the same size the tracking error
+ * actually supports, but over the photograph instead of beside it — so a
+ * cell is read as a part of the scene rather than as an abstract square.
+ * One source at a time, chosen by the presenter, because the point is to
+ * flip between the two human groups on the same image.
+ */
+let gridCache = { key: null, data: null, at: 0 };
+
+async function gridData() {
+  // Polled at the display's own rate would be four calls a second for a map
+  // that changes when someone finishes, so it is refreshed on a slower beat.
+  if (gridCache.data && Date.now() - gridCache.at < 4000) return gridCache.data;
+  try {
+    const d = await fetch('/api/compare/maps', {cache: 'no-store'}).then((r) => r.json());
+    gridCache = { key: null, data: d, at: Date.now() };
+    return d;
+  } catch { return gridCache.data; }
+}
+
+async function renderGrid(show, source, state) {
+  const host = document.getElementById('grid');
+  if (!show) { host.innerHTML = ''; host.hidden = true; return; }
+
+  const d = await gridData();
+  const m = d && d.ok ? (d.maps || {})[source] : null;
+  if (!m) {
+    host.innerHTML = '';
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+
+  const aspect = state.image && state.image.height
+    ? state.image.width / state.image.height : 1;
+  const max = Math.max(...m.cells);
+  const series = SERIES.find((s) => s.key === source) || {label: source};
+
+  host.innerHTML = '';
+  const svg = gridSvg(m.cells, d.grid, {
+    aria: `${series.label}: attention per grid cell, over the image`,
+    aspect,
+    colour: (v) => seqColour(v, max),
+    label: (v) => Math.round(v * 100) + '%',
+    // Translucent: the whole point is that the audience still sees what is
+    // in each part of the picture while reading how much attention it drew.
+    fillOpacity: 0.46,
+    hover: false,
+    tip: () => '',
+  });
+  // Stretched to the frame, which already carries the picture's proportions,
+  // so the cells land on the regions they describe.
+  svg.setAttribute('preserveAspectRatio', 'none');
+  host.appendChild(svg);
 }
 
 function renderExperimentalWarning(run, show) {
@@ -313,11 +381,13 @@ async function renderJson(show) {
    table, no dot plot, no tooltips. Nobody reads a nine-row table or hovers a
    mark from the back of a room, and putting them up there would only make the
    two images that do work smaller. */
-/* The difference map is the one image the audience has to hold in their head
-   after the picture goes away, so it is drawn over a faint plate of the scene
-   itself. The three density panels are not: they are read by comparing fills
-   across three grids on one scale, and three photographs behind them would
-   fight exactly that comparison. They take the scene's proportions only. */
+/* Every grid is drawn over a faint plate of the scene, so a cell is always
+   anchored to the thing it describes rather than floating as an abstract
+   square. The difference map's plate is the stronger of the two: it is the
+   one image the audience has to hold in their head after the picture goes
+   away. The three density panels take a fainter one, because they are read
+   by comparing fills across three grids and the photograph must not compete
+   with that. */
 const sceneUrl = (d) => d.image
   ? '/img/' + encodeURIComponent(d.image.filename) : null;
 const sceneAspect = (d) => (d.image && d.image.width && d.image.height)
@@ -364,7 +434,8 @@ async function renderCharts(show) {
     + 'person, on one shared colour scale \u2014 ' + MORE_IS
     + ' means more looked at.';
   main.appendChild(mcap);
-  main.appendChild(densityPanels(d, {hover: false, aspect: sceneAspect(d)}));
+  main.appendChild(densityPanels(d, {hover: false, aspect: sceneAspect(d),
+                                     image: sceneUrl(d)}));
   main.appendChild(sequentialScale());
   body.appendChild(main);
 
@@ -569,6 +640,7 @@ async function tick() {
     state.layers.gaze && gaze.contributors,
     state.layers.gaze_paths && gaze.contributors,
     state.layers.charts && [data.count, gaze.contributors],
+    state.layers.grid && [state.grid_source, data.count, gaze.contributors],
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -597,6 +669,7 @@ async function tick() {
 
   renderJson(state.layers.json);
   renderCharts(state.layers.charts);
+  renderGrid(state.layers.grid, state.grid_source || 'tapped', state);
 
   const resized = sizeCanvas();
   if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick

@@ -160,7 +160,7 @@ function svg(tag, attrs) {
 
 /* ---------- the grid mark ---------- */
 
-function gridSvg(cells, n, o) {
+export function gridSvg(cells, n, o) {
   // The grid divides the picture, so it carries the picture's shape. Drawn
   // square over a 4:3 photograph it would not line up with the thing it
   // describes.
@@ -175,7 +175,7 @@ function gridSvg(cells, n, o) {
     // with the fills it sits behind.
     root.appendChild(svg("image", {
       href: o.image, x: 0, y: 0, width: W, height: H,
-      preserveAspectRatio: "none", opacity: 0.55,
+      preserveAspectRatio: "none", opacity: o.plate ?? 0.55,
       style: "filter:saturate(.35)",
     }));
   }
@@ -185,8 +185,12 @@ function gridSvg(cells, n, o) {
     const fill = o.colour(v);
     // A 2px surface gap between fills, never a border, so two cells of a
     // similar shade still read as two cells.
+    // Translucent whenever there is something behind worth seeing: the
+    // embedded plate, or — for the grid drawn straight onto the projected
+    // picture — the photograph itself.
+    const alpha = o.fillOpacity ?? (o.image ? 0.78 : 1);
     const rect = svg("rect", {x, y, width: cw, height: ch, rx: 4, fill,
-                              "fill-opacity": o.image ? 0.78 : 1});
+                              "fill-opacity": alpha});
     root.appendChild(rect);
     const t = svg("text", {
       x: x + cw / 2, y: y + ch / 2 + ch * 0.055, "text-anchor": "middle",
@@ -194,8 +198,8 @@ function gridSvg(cells, n, o) {
       fill: inkFor(fill), "font-family": "inherit", "pointer-events": "none",
       // Over a photograph the fill alone no longer decides legibility, so the
       // number carries its own contrast.
-      ...(o.image ? {stroke: inkFor(fill) === "#12131a" ? "#fff" : "#000",
-                     "stroke-width": 3, "paint-order": "stroke"} : {}),
+      ...(alpha < 1 ? {stroke: inkFor(fill) === "#12131a" ? "#fff" : "#000",
+                       "stroke-width": 3, "paint-order": "stroke"} : {}),
     });
     t.textContent = o.label(v);
     root.appendChild(t);
@@ -231,6 +235,9 @@ export function densityPanels(data, opts = {}) {
       card.appendChild(gridSvg(m.cells, data.grid, {
         aria: `${s.label}: attention per grid cell`,
         aspect: opts.aspect,
+        // Fainter than the difference map's plate: three of these sit side
+        // by side and have to be compared to each other, not studied.
+        image: opts.image, plate: 0.34,
         colour: (v) => seqColour(v, max),
         label: (v) => Math.round(v * 100) + "%",
         hover,
