@@ -630,3 +630,14 @@ during the build, each recorded in the commit that made it:
 **Outstanding:** `tools/predict_mps.py` has not been run against the real
 model, there being no GPU in the build environment. It is the only unverified
 component and the first thing to validate on the MacBook.
+
+### 11.2 Proposed extension: webcam gaze capture
+
+[`SPEC-WEBCAM.md`](SPEC-WEBCAM.md) specs a second capture mode that measures
+gaze with the phone's front camera instead of asking people to predict it.
+It would close the caveat in §1.1 directly, and makes the comparison
+within-subject: the same person's prediction against their own measurement.
+
+The binding constraint is accuracy: available browser trackers resolve about a
+3 x 3 grid on a phone, so that mode needs its own coarser analysis rather than
+the mean-shift AOIs in §7. Not yet approved.

@@ -24,6 +24,12 @@ in the environment it was written in. See *Running the model* below.
 capabilities and constraints, the architecture, the analysis method, and a
 phased build order.
 
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) — how to actually run a session.
+
+[`docs/SPEC-WEBCAM.md`](docs/SPEC-WEBCAM.md) — draft spec for a second capture
+mode that *measures* gaze with the phone's front camera rather than asking
+people to predict it. Not yet approved.
+
 ## Architecture in one line
 
 A FastAPI + SQLite web app runs in a GitHub Codespace and hosts the live
