@@ -216,7 +216,7 @@ async function upload(durationMs) {
      <p style="font-size:.75rem">${samples.length} samples at ${rate}/s${
        blinks ? `, ${blinks} blinks` : ''}${
        offImage ? `, ${offImage} off the picture` : ''}.</p>
-     <p>Look up at the screen.</p>`, null);
+     <p>Look up at the screen.</p>`, 'Done', () => { location.href = '/?viewed=1'; });
 }
 
 function finishWithout() {

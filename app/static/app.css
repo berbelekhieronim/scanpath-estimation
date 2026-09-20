@@ -15,6 +15,12 @@
 
 * { box-sizing: border-box; }
 
+/* The browser's own [hidden] rule is display:none at the lowest specificity,
+   so any class carrying an explicit display beats it and the element stays
+   visible with .hidden = true silently doing nothing. That is exactly how the
+   Undo button survived submission. Closed here for every page. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;

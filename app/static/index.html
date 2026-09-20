@@ -109,13 +109,59 @@ function addTap(ev) {
 function showThanks(count) {
   $('prompt').hidden = true;
   $('actions').hidden = true;
+
+  // Offer the measurement stage, unless this device already declined the
+  // camera. Without this the journey dead-ends here and the eye-tracking
+  // half of the demo is unreachable from the participant's own phone.
+  let consent = null;
+  try { consent = localStorage.getItem('scanpath_camera_consent'); } catch {}
+  const offer = consent === 'declined' ? '' : `
+      <p style="margin-top:22px">Now the other half: we can <strong>measure</strong>
+         where your eyes actually go, and compare it with what you just
+         predicted.</p>
+      <button class="primary" id="to-camera"
+              style="margin-top:12px;padding:14px 24px;font-size:1rem">
+        Measure where I really look
+      </button>`;
+
   $('stage').innerHTML = `<div class="state">
       <div>
         <div class="big">✓</div>
         <h2>Thank you</h2>
-        <p>Your ${count} marks are in. Look up at the screen.</p>
+        <p>Your ${count} marks are in.</p>
+        ${offer || '<p>Look up at the screen.</p>'}
       </div>
     </div>`;
+
+  const btn = $('to-camera');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      location.href = consent === 'granted' ? '/calibrate' : '/consent';
+    });
+  }
+}
+
+/* Arriving back here from the camera stages. Landing on the tap screen with
+   no explanation is disorienting — it looks like the app forgot what just
+   happened. */
+function showReturnState() {
+  const p = new URLSearchParams(location.search);
+  const messages = {
+    nocamera: ['No camera measurement', 'That part was skipped. Your taps still count — look up at the screen.'],
+    declined: ['Camera not used', 'Your taps still count — look up at the screen.'],
+    viewed: ['All done', 'We have both your prediction and your actual looking. Look up at the screen.'],
+  };
+  for (const key of Object.keys(messages)) {
+    if (!p.has(key)) continue;
+    const [title, body] = messages[key];
+    $('prompt').hidden = true;
+    $('actions').hidden = true;
+    $('stage').innerHTML =
+      `<div class="state"><div><div class="big">✓</div>
+        <h2>${title}</h2><p>${body}</p></div></div>`;
+    return true;
+  }
+  return false;
 }
 
 function showWaiting(msg) {
@@ -161,6 +207,7 @@ async function submit() {
 }
 
 async function init() {
+  if (showReturnState()) return;
   let s;
   try {
     s = await fetch('/api/state').then((r) => r.json());

@@ -167,3 +167,50 @@ def test_qr_svg_is_scalable(client):
 def test_capture_page_loads(client):
     assert client.get("/").status_code == 200
     assert client.get("/qr").status_code == 200
+
+
+# --- the submitted state (Undo stayed visible on a real device) -----------
+
+def test_hidden_attribute_is_enforced_globally():
+    """The browser's own [hidden] rule is display:none at the lowest
+    specificity, so any class with an explicit display beats it and .hidden
+    silently does nothing. That is how the Undo button survived submission."""
+    css = (Path(__file__).resolve().parent.parent
+           / "app" / "static" / "app.css").read_text()
+    assert "[hidden] { display: none !important; }" in css
+
+
+def test_actions_bar_would_otherwise_have_beaten_hidden():
+    """Guards the specific collision, so reordering the CSS cannot quietly
+    reintroduce it."""
+    capture = (Path(__file__).resolve().parent.parent
+               / "app" / "static" / "capture.css").read_text()
+    assert "display: flex" in capture.split(".actions")[1].split("}")[0]
+
+
+def test_submitting_offers_the_measurement_stage():
+    """Without this the journey dead-ends at the taps and the eye-tracking
+    half is unreachable from the participant's own phone."""
+    src = (Path(__file__).resolve().parent.parent
+           / "app" / "static" / "index.html").read_text()
+    assert "to-camera" in src
+    assert "'/consent'" in src and "'/calibrate'" in src
+
+
+def test_a_device_that_declined_is_not_asked_again():
+    src = (Path(__file__).resolve().parent.parent
+           / "app" / "static" / "index.html").read_text()
+    assert "consent === 'declined'" in src
+
+
+@pytest.mark.parametrize("flag,phrase", [
+    ("viewed", "All done"),
+    ("nocamera", "No camera measurement"),
+    ("declined", "Camera not used"),
+])
+def test_returning_from_the_camera_stages_is_explained(flag, phrase):
+    """Landing back on the tap screen with no explanation looks like the app
+    forgot what just happened."""
+    src = (Path(__file__).resolve().parent.parent
+           / "app" / "static" / "index.html").read_text()
+    assert flag in src and phrase in src
