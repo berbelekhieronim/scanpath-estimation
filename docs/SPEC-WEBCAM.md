@@ -553,6 +553,44 @@ reported the dead run.
 **`?light=1`** halves the calibration points as a fallback if memory is still
 the culprit. A weaker fit, but half the retained tensors.
 
+### 13.8 Third test: the actual bug was mine
+
+Still crashing, and again with nothing to look at. But *"after a couple of
+calibration attempts"* was the detail that mattered, and it pointed at this
+project's code rather than the library's.
+
+**Every retry built a whole new tracker.** `begin()` called `createTracker()`
+each time, which constructs a fresh `WebEyeTrack`, which loads another
+BlazeGaze model and another MediaPipe FaceLandmarker. `stop()` only stopped
+the camera stream, and **upstream exposes no `dispose()` on either object**.
+So attempt one held one model, attempt two held two, attempt three held
+three — and the tab died. That matches the reported symptom exactly, in a way
+the earlier tensor-leak theory did not.
+
+The tracker is now created once and reused. `restart()` clears the fitted
+calibration and opens a fresh camera client without touching the model.
+Verified in a browser with a stubbed library: three attempts now produce
+**one** model construction and **one** `initialize()`, against three of each
+before.
+
+`destroy()` is a genuine teardown for leaving the page, reaching past
+upstream's missing API to `tf.LayersModel.dispose()` and MediaPipe's
+`FaceLandmarker.close()`. The tap listener is also bound once rather than per
+attempt, which previously meant the Nth attempt fired N taps per touch —
+quietly corrupting calibration on every retry.
+
+**The previous two diagnoses were wrong, and the pattern is worth naming.**
+Each round produced a plausible theory from reading the library, and each
+shipped a change that did not fix it. What broke the cycle was a detail in the
+report — "a couple of attempts" — that no amount of source reading would have
+supplied. The memory instrumentation and the crash breadcrumbs from those
+rounds are still worth having, but they were not the fix.
+
+The breadcrumb also now renders **on the start screen** rather than only
+posting to the server, since two rounds ended with "no logs": a crashed tab
+cannot report itself, and a server-side record is no use to the person holding
+the phone.
+
 ### 13.5 Verified, and not
 
 Driven end to end in a headless browser against the mock backend: consent flow

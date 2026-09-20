@@ -241,3 +241,55 @@ def test_diagnostics_are_persisted(client):
     with db.connect() as conn:
         row = conn.execute("SELECT diagnostics_json FROM gaze_sessions").fetchone()
     assert json.loads(row["diagnostics_json"])["framesSeen"] == 120
+
+
+# --- retry must not rebuild the model (crash on the 2nd/3rd attempt) -------
+
+def test_page_reuses_the_tracker_across_attempts():
+    """Constructing WebEyeTrack again loads another BlazeGaze model and
+    another MediaPipe FaceLandmarker, neither of which upstream can dispose.
+    A retry therefore used to double the memory held, and a third attempt
+    tripled it — which is exactly when the tab died."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "if (!tracker) tracker = createTracker" in src
+    assert "tracker.restart()" in src
+
+
+def _method_body(src, signature):
+    """Text of a class method: from its definition to the next one at the
+    same indent. Plain str.index is unreliable here — several classes in the
+    file share method names."""
+    start = src.index(signature)
+    rest = src[start + len(signature):]
+    end = re.search(r"\n  [A-Za-z_$]", rest)
+    return rest[:end.start()] if end else rest
+
+
+def test_tracker_offers_restart_without_rebuilding():
+    src = (STATIC / "gaze" / "tracker.js").read_text()
+    body = _method_body(src, "  async restart() {")
+    assert "new lib.WebEyeTrack" not in body, "restart must not build a new model"
+    assert "new lib.WebcamClient" in body, "but it does need a fresh camera client"
+    assert "this.start()" in body, "and must fall back when there is no model yet"
+
+
+def test_destroy_releases_the_model_and_the_face_landmarker():
+    """Upstream exposes no dispose, but tf.LayersModel has .dispose() and
+    MediaPipe's FaceLandmarker has .close(); both are reachable."""
+    body = _method_body((STATIC / "gaze" / "tracker.js").read_text(), "  destroy() {")
+    assert "model.dispose()" in body
+    assert "faceLandmarker.close()" in body
+
+
+def test_tap_listener_is_bound_once():
+    """A listener added per attempt fires N times on the Nth attempt."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "_tapBound" in src
+
+
+def test_previous_run_is_shown_on_screen():
+    """A crashed tab cannot report itself, and a server-side-only record is
+    no use to someone holding the phone."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "showLastRun" in src
+    assert "Previous run did not finish" in src

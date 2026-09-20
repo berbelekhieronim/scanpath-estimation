@@ -102,6 +102,58 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     return lib;
   }
 
+  /* Restart the camera WITHOUT rebuilding the model.
+   *
+   * This is the important one. Constructing WebEyeTrack again loads another
+   * BlazeGaze model and another MediaPipe FaceLandmarker, and upstream
+   * exposes no dispose() for either — so a retry used to double the memory
+   * held, and a third attempt tripled it. That is why it survived one
+   * calibration and died on the next.
+   */
+  async restart() {
+    if (!this.wet) return this.start();
+    this.resetCalibration();
+    try { this.cam && this.cam.stopWebcam(); } catch {}
+    this._setStatus(STATUS.PERMISSION);
+    const lib = await this._loadLibrary();
+    this.cam = new lib.WebcamClient(this.videoEl.id);
+    this._t0 = performance.now();
+    this._lastCalibAt = 0;
+    this._lastCalibPt = null;
+    await this.cam.startWebcam(this._frameHandler);
+    this._setStatus(STATUS.RUNNING);
+  }
+
+  /** Clear the fitted calibration so a retry starts clean. */
+  resetCalibration() {
+    this.releaseCalibrationMemory();
+    try {
+      if (this.wet) {
+        this.wet.latestMouseClick = null;
+        if (this.wet.affineMatrix && this.wet.affineMatrix.dispose) {
+          this.wet.affineMatrix.dispose();
+        }
+        this.wet.affineMatrix = null;
+      }
+    } catch {}
+  }
+
+  /* Last-resort teardown. Only for leaving the page — after this the tracker
+   * cannot be restarted without a full reload. */
+  destroy() {
+    this.stop();
+    try {
+      const bg = this.wet && this.wet.blazeGaze;
+      if (bg && bg.model && bg.model.dispose) bg.model.dispose();
+    } catch {}
+    try {
+      const fl = this.wet && this.wet.faceLandmarkerClient;
+      if (fl && fl.faceLandmarker && fl.faceLandmarker.close) fl.faceLandmarker.close();
+    } catch {}
+    this.wet = null;
+    this.cam = null;
+  }
+
   async start() {
     try {
       this._setStatus(STATUS.LOADING);
@@ -117,7 +169,7 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
       this.cam = new lib.WebcamClient(this.videoEl.id);
       this._t0 = performance.now();
 
-      await this.cam.startWebcam(async (frame, timestamp) => {
+      this._frameHandler = async (frame, timestamp) => {
         if (this.status === STATUS.STOPPED) return;
         let result;
         try {
@@ -128,7 +180,8 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
           return;
         }
         this.onSample(this._toSample(result));
-      });
+      };
+      await this.cam.startWebcam(this._frameHandler);
 
       this._setStatus(STATUS.RUNNING);
     } catch (err) {
@@ -303,6 +356,10 @@ export class MockBackend extends GazeTrackerBase {
     this._calibrated += 1;
     return { accepted: true, points: this._calibrated };
   }
+
+  async restart() { this._calibrated = 0; return this.start(); }
+  resetCalibration() { this._calibrated = 0; }
+  destroy() { this.stop(); }
 
   memory() { return { numTensors: 0, mb: 0 }; }
   releaseCalibrationMemory() { return { before: this.memory(), after: this.memory() }; }

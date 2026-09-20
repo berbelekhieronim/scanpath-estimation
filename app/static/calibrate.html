@@ -113,6 +113,8 @@
       <p style="font-size:.8125rem">Whatever position you choose, keep it the
         same until the end.</p>
       <button class="primary" id="ov-btn">Start</button>
+      <div id="last-run" style="margin-top:18px;font-size:.75rem;color:var(--muted);
+           max-width:400px;text-align:left"></div>
     </div>
   </div>
 </div>
@@ -158,10 +160,34 @@ function crumb(stage, extra = {}) {
   } catch {}
 }
 
+/* Show the previous run on screen as well as posting it.
+ *
+ * Two device tests in a row ended with "no logs". A crashed tab cannot report
+ * anything itself, and a report that only exists server-side is no use to
+ * someone holding the phone. So the last breadcrumb is rendered right here,
+ * on the start screen, before anything else runs. */
+function showLastRun(saved) {
+  const el = $('last-run');
+  if (!el || !saved) return;
+  const bits = [`stage: <strong>${saved.stage}</strong>`];
+  if (saved.framesSeen != null) bits.push(`frames ${saved.framesSeen}`);
+  if (saved.faceRate != null) bits.push(`face ${Math.round(saved.faceRate * 100)}%`);
+  if (saved.accepted != null) bits.push(`points ${saved.accepted}`);
+  if (saved.memory) bits.push(`${saved.memory.numTensors} tensors / ${saved.memory.mb}MB`);
+  if (saved.attempts != null) bits.push(`attempt ${saved.attempts}`);
+  el.innerHTML =
+    `<div style="border:1px solid var(--warn);border-radius:8px;padding:10px 12px">
+       <strong style="color:var(--warn)">Previous run did not finish</strong><br>
+       ${bits.join(' · ')}<br>
+       <span style="opacity:.8">${saved.at || ''}</span>
+     </div>`;
+}
+
 async function flushCrumb() {
   let saved;
   try { saved = JSON.parse(localStorage.getItem(CRUMB_KEY) || 'null'); } catch {}
   if (!saved || saved.stage === 'done') { clearCrumb(); return; }
+  showLastRun(saved);
   try {
     await fetch('/api/gaze/session', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -225,7 +251,11 @@ async function begin() {
   $('title').textContent = 'Starting the camera';
   $('hint').textContent = 'Allow the camera prompt if it appears.';
 
-  tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'));
+  // Reuse the tracker across attempts. Building a new one loads another
+  // model that nothing ever frees, which is what killed the tab on the
+  // second or third try.
+  const reusing = !!tracker;
+  if (!tracker) tracker = createTracker(USE_MOCK ? 'mock' : 'webeyetrack', $('cam'));
   tracker.onStatus = (status, err) => {
     if (status === STATUS.ERROR) {
       overlay('The camera could not start', `<p>${err || ''}</p>`,
@@ -233,11 +263,11 @@ async function begin() {
     }
   };
 
-  crumb('starting');
+  crumb(reusing ? 'restarting' : 'starting');
   try {
-    await tracker.start();
+    await (reusing ? tracker.restart() : tracker.start());
   } catch { crumb('start_failed'); return; }
-  crumb('camera_running');
+  crumb('camera_running', tracker.memory ? { memory: tracker.memory() } : {});
 
   // ?light=1 halves the calibration points. Fewer points means a weaker fit,
   // but also far fewer retained eye-patch tensors — the fallback if memory
@@ -270,12 +300,15 @@ async function begin() {
   // Tapping anywhere counts — a participant aiming at a 64px target while
   // also holding their gaze on it will miss, and a missed tap that does
   // nothing reads as the app being broken.
-  $('cal').addEventListener('pointerdown', (e) => {
-    if (!$('overlay').classList.contains('hidden')) return;
-    e.preventDefault();
-    acknowledgeTap(e);
-    calib.tap();
-  });
+  if (!window._tapBound) {
+    window._tapBound = true;
+    $('cal').addEventListener('pointerdown', (e) => {
+      if (!$('overlay').classList.contains('hidden')) return;
+      e.preventDefault();
+      acknowledgeTap(e);
+      if (calib) calib.tap();
+    });
+  }
 
   // Live face indicator, so a stall is visible while it is happening rather
   // than only in the result.
@@ -288,7 +321,10 @@ async function begin() {
     const mem = d.memory ? ` · ${d.memory.numTensors}t ${d.memory.mb}MB` : '';
     chip.textContent = (stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`) + mem;
     chip.className = 'face-chip ' + (stale ? 'bad' : 'ok');
-    crumb('calibrating', d);
+    if (!window._crumbTick || Date.now() - window._crumbTick > 2500) {
+      window._crumbTick = Date.now();
+      crumb('calibrating', d);
+    }
   }, 500);
 
   const result = await calib.run();
@@ -385,7 +421,7 @@ $('ov-btn').onclick = begin;
 renderProgress(0, CALIB_POINTS.length, 'calibration');
 flushCrumb();   // report anything a previous crashed run left behind
 
-window.addEventListener('pagehide', () => tracker && tracker.stop());
+window.addEventListener('pagehide', () => tracker && tracker.destroy());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && tracker) tracker.stop();
 });
