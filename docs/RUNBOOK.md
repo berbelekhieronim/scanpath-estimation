@@ -310,6 +310,21 @@ Writes `data/exports/session-TIMESTAMP.json` and a CSV of every tap. **Commit
 them.** A Codespace is eventually deleted with its database inside, and
 participant responses are the only thing here that cannot be regenerated.
 
+**Commit real model runs too.** `data/model/*.json` used to be gitignored on
+the grounds that runs are regenerable. That holds for synthetic placeholders,
+which take seconds. It does not hold for a real run: an hour or more of MPS
+time against weights this Codespace does not have, so the JSON is the only
+artifact of that compute. Check what you have before a session:
+
+```bash
+python3 -c "
+import json,glob
+for f in sorted(glob.glob('data/model/*.json')):
+    d=json.load(open(f))
+    print(f.split('/')[-1], d.get('source'), 'samples:', len(d.get('samples_norm') or []))
+"
+```
+
 ---
 
 ## Troubleshooting

@@ -4,9 +4,14 @@ data/app.sqlite-*
 data/*.db
 
 
-# Precomputed model runs are regenerable; exports are NOT and are committed
-data/model/*
+# Model runs ARE committed. The original rule assumed they were regenerable,
+# which was true only while they were synthetic placeholders: a real run is
+# an hour or more of MPS time against weights this Codespace does not have,
+# so the JSON is the only artifact of that compute and the container is
+# eventually deleted with everything in it. Each file says which it is in its
+# "source" field, and the server warns loudly at startup about synthetic ones.
 !data/model/.gitkeep
+!data/model/*.json
 
 # Model artifacts
 *_merged/
