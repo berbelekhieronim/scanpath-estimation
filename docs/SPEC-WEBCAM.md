@@ -783,3 +783,51 @@ top edge.
 **Untested on a real device.** In particular the actual sample count from a
 five-second window at the real frame rate — the number that decides whether
 the coarse grid has enough data per participant.
+
+---
+
+## 15. Systematic offset correction
+
+Reported from a real phone: gaze registered consistently **above** where the
+person was actually looking — fixations landing over a figure's head rather
+than on him — even with a calibration graded usable.
+
+That is a shared offset, not scatter, and the two are worth separating.
+BlazeGaze is adapted from a pretrained prior in a few gradient steps, so a
+constant bias can survive calibration while the relative geometry is fine.
+
+**The validation points already measure it.** They are the only points with a
+known truth that the fit never trained on, so the mean of
+`measured − target` across them is precisely the shared offset. It is now
+subtracted from every viewing sample.
+
+Two consequences worth stating:
+
+- **Only the mean is removed.** Scatter around it is genuine measurement error
+  and stays in the numbers. Removing more would be inventing precision.
+- **The grade now uses the corrected error.** Grading on the uncorrected
+  figure would reject calibrations whose data is perfectly usable once a
+  constant offset is taken out. Both figures are stored, so the raw error is
+  still recoverable.
+
+On simulated data a tracker reading 8% high grades *poor* uncorrected and
+leaves **1.3%** residual once corrected. On the first real device the measured
+offset was 4%, taking a calibration to 19% residual.
+
+This does not change §2's conclusion. The residual is what the coarse grid has
+to live with, and it remains around a fifth of the screen.
+
+## 16. Device information
+
+Browser, platform, screen and viewport dimensions, pixel ratio, orientation,
+touch points, languages, timezone and colour-scheme preference are recorded
+per participant and included in the JSON export.
+
+Tracking quality varies a lot with screen size and browser, and without this
+there is no way to tell afterwards whether a poor session was the room, the
+phone or the person. Nothing recorded identifies anyone — it is what any
+website reads on page load — and it stays under the same anonymity promise as
+the rest.
+
+The CSV export was removed at the owner's request; the JSON carries
+everything.

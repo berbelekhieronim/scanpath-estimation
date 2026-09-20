@@ -140,35 +140,24 @@ def test_compare_grid_is_clamped(client):
 
 # --- export ----------------------------------------------------------------
 
-def test_long_format_csv_has_one_row_per_observation(client):
+def test_there_is_no_csv_export(client):
+    """Dropped on request: the JSON export carries everything and the CSV
+    was another shape to keep in step for no benefit."""
+    assert client.get("/api/export.csv", headers=AUTH).status_code == 404
+
+
+def test_json_export_carries_device_information(client):
     rid = client.get("/api/state").json()["round_id"]
     client.post("/api/markers", json={
         "round_id": rid, "participant_uuid": "participant-0001",
-        "points": [[0.2, 0.3], [0.5, 0.5]]})
-    r = client.get("/api/export.csv", headers=AUTH)
-    assert r.status_code == 200
-    assert "text/csv" in r.headers["content-type"]
-    lines = r.text.strip().splitlines()
-    assert lines[0].split(",")[:5] == ["round_id", "image", "participant",
-                                       "condition", "source"]
-    assert len(lines) == 3, "header plus two marks"
+        "points": [[0.2, 0.3]],
+        "device": {"browser": "Safari", "screen_w": 390, "screen_h": 844,
+                   "dpr": 3, "orientation": "portrait", "ua": "test"}})
+    d = client.get("/api/export", headers=AUTH).json()
+    dev = d["participants"][0]["device"]
+    assert dev["browser"] == "Safari" and dev["screen_w"] == 390 and dev["dpr"] == 3
 
 
-def test_csv_carries_all_sources_in_one_table(client):
-    rid = client.get("/api/state").json()["round_id"]
-    client.post("/api/markers", json={
-        "round_id": rid, "participant_uuid": "participant-0001",
-        "points": [[0.2, 0.3]]})
-    client.post("/api/model/push", json={
-        "image": "a.jpg", "mode": "freeview", "n_fixations": 2,
-        "scanpath_norm": [[0.4, 0.4], [0.6, 0.6]]}, headers=AUTH)
-    rows = client.get("/api/export.csv", headers=AUTH).text.strip().splitlines()[1:]
-    sources = {r.split(",")[4] for r in rows}
-    assert {"tap", "model"} <= sources
-
-
-def test_csv_export_is_token_gated(client):
-    assert client.get("/api/export.csv").status_code == 403
 
 
 def test_tap_page_routes_gaze_participants_away():
@@ -183,3 +172,25 @@ def test_tap_page_does_not_offer_measurement_in_a_split_design():
     between-subjects split exists to avoid."""
     src = (STATIC / "index.html").read_text()
     assert "betweenSubjects" in src
+
+
+def test_assignment_sticks_to_a_device(client):
+    """By design: one person must not end up doing both conditions. It does
+    mean a single test phone keeps the same condition until it is reset."""
+    set_mode(client, "mixed")
+    first = assign(client, "one-phone-0001")["condition"]
+    for _ in range(5):
+        assert assign(client, "one-phone-0001")["condition"] == first
+
+
+def test_a_new_round_reassigns(client):
+    set_mode(client, "mixed")
+    assign(client, "one-phone-0001")
+    client.post("/api/control/reset-round", headers=AUTH)
+    assert assign(client, "one-phone-0001")["new"] is True
+
+
+def test_participant_page_can_forget_its_identity():
+    src = (STATIC / "index.html").read_text()
+    assert "newid" in src
+    assert "localStorage.removeItem(UUID_KEY)" in src

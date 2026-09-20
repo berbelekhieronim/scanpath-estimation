@@ -272,16 +272,49 @@ export class Calibration {
     return this.samples.length > 0;
   }
 
+  /* Mean residual offset between where the tracker said the eye was and
+   * where the target actually sat.
+   *
+   * The adapter is fine-tuned from a pretrained prior in a few gradient
+   * steps, so a systematic offset can survive calibration — reported on a
+   * real phone as gaze registering consistently above where the person was
+   * looking. The validation points already measure exactly that residual, so
+   * it can be subtracted from subsequent samples instead of being lived with.
+   *
+   * Only the SHARED component is removed. Scatter around it is genuine
+   * measurement error and stays in the numbers.
+   */
+  bias() {
+    const pts = this.validation.filter((v) => v.measured);
+    if (pts.length < 2) return null;
+    const dx = pts.reduce((a, v) => a + (v.measured[0] - v.target[0]), 0) / pts.length;
+    const dy = pts.reduce((a, v) => a + (v.measured[1] - v.target[1]), 0) / pts.length;
+    return [dx, dy];
+  }
+
   result(failure = null) {
     const errs = this.validation.map((v) => v.error).filter((e) => e != null);
     const meanError = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
     const worstError = errs.length ? Math.max(...errs) : null;
-    const grade = failure ? 'failed' : gradeError(meanError);
+
+    // Error that would remain once the shared offset is removed. This is the
+    // honest figure for what the corrected data can resolve; meanError stays
+    // as the uncorrected measurement.
+    const b = this.bias();
+    const residuals = b ? this.validation.filter((v) => v.measured).map((v) =>
+      Math.hypot(v.measured[0] - b[0] - v.target[0],
+                 v.measured[1] - b[1] - v.target[1])) : [];
+    const residualError = residuals.length
+      ? residuals.reduce((a, x) => a + x, 0) / residuals.length : null;
+    const grade = failure ? 'failed'
+      : gradeError(residualError != null ? residualError : meanError);
     return {
       ok: grade === 'good' || grade === 'usable',
       grade,
       failure,
       diagnostics: this.diagnostics(),
+      bias: b,
+      residualError,
       meanError,
       worstError,
       pointsAccepted: this.accepted,

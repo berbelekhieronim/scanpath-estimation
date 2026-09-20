@@ -38,11 +38,25 @@
 
 <div class="toast" id="toast"></div>
 
-<script>
+<script type="module">
+import { deviceInfo } from '/static/device.js';
+
 const $ = (s) => document.getElementById(s);
 const UUID_KEY = 'scanpath_participant_uuid';
 
 function participantUuid() {
+  // ?newid=1 forgets this device's identity, so the next assignment is a
+  // fresh draw. Assignment is deliberately sticky per participant — one
+  // person must not do both conditions — which means one test phone always
+  // lands in the same group until this is used.
+  if (new URLSearchParams(location.search).get('newid') === '1') {
+    try {
+      localStorage.removeItem(UUID_KEY);
+      localStorage.removeItem('scanpath_gaze_session_id');
+      localStorage.removeItem('scanpath_camera_consent');
+    } catch {}
+    history.replaceState(null, '', location.pathname);
+  }
   let id = localStorage.getItem(UUID_KEY);
   if (!id) {
     id = (crypto.randomUUID && crypto.randomUUID()) ||
@@ -189,6 +203,7 @@ async function submit() {
       body: JSON.stringify({
         round_id: state.round_id,
         participant_uuid: participantUuid(),
+        device: deviceInfo(),
         points: taps.map((t) => [t.x, t.y]),
       }),
     });

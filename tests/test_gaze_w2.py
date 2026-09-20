@@ -361,3 +361,38 @@ def test_memory_is_recorded_per_point_not_just_once():
 def test_backend_is_reported_in_diagnostics():
     src = (STATIC / "gaze" / "calibration.js").read_text()
     assert "backend: this.tracker.backend" in src
+
+
+# --- systematic offset correction -----------------------------------------
+
+def test_validation_measures_and_removes_a_shared_offset():
+    """A real phone read consistently above where the person was looking. The
+    adapter is fine-tuned from a pretrained prior in a few steps, so a
+    systematic offset can survive calibration — and the validation points
+    already measure exactly it."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "bias()" in src
+    assert "residualError" in src
+    body = _method_body(src, "  bias() {")
+    assert "measured[0] - v.target[0]" in body and "measured[1] - v.target[1]" in body
+
+
+def test_grade_uses_the_corrected_error():
+    """Grading on the uncorrected figure would reject calibrations whose data
+    is fine once the shared offset is removed."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "gradeError(residualError != null ? residualError : meanError)" in src
+
+
+def test_viewing_samples_have_the_offset_removed():
+    src = (STATIC / "calibrate.html").read_text()
+    body = src[src.index("function toImageCoords"):src.index("async function runViewingStage")]
+    assert "s.x - gazeBias[0]" in body and "s.y - gazeBias[1]" in body
+
+
+def test_only_the_shared_component_is_removed():
+    """Scatter around the offset is genuine measurement error and must stay in
+    the numbers; only the mean is subtracted."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    body = _method_body(src, "  bias() {")
+    assert "/ pts.length" in body

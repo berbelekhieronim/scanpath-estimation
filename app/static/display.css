@@ -165,3 +165,6 @@ body.has-experimental .display { padding-bottom: 40px; }
    whole point is that they are different kinds of evidence. */
 #gaze { pointer-events: none; }
 .legend .swatch.gaze { background: #b06bff; }
+
+#gazepaths { pointer-events: none; }
+#gazepaths .gnum { font: 700 11px -apple-system, system-ui, sans-serif; fill: #1a0a2e; }

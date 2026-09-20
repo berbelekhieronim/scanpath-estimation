@@ -27,6 +27,7 @@
       <svg id="paths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
       <svg id="model" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
       <canvas id="gaze"></canvas>
+      <svg id="gazepaths" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true"></svg>
     </div>
   </div>
 
@@ -78,6 +79,25 @@ function renderGaze(data, show) {
   // Measured gaze is coarse — roughly a fifth of the screen in error — so it
   // is drawn as a density cloud rather than points pretending to precision.
   drawHeatmap(c, data.points, 0.12);
+}
+
+function renderGazePaths(data, show) {
+  const svg = $('gazepaths');
+  if (!show || !data || !data.paths.length) { svg.innerHTML = ''; return; }
+  const V = 1000;
+  // One line per person, in time order. At roughly 3 Hz these are not
+  // fixations in the strict sense — they are the sampled path of the eye —
+  // so they are drawn as a trace rather than numbered fixation circles.
+  svg.innerHTML = data.paths.map((pts) => {
+    const d = pts.map(([x, y]) => `${x * V},${y * V}`).join(' ');
+    const start = pts[0];
+    return `<polyline points="${d}" fill="none" stroke="#d3a5ff"
+              stroke-opacity=".8" stroke-width="2.5" stroke-linejoin="round"
+              stroke-linecap="round" vector-effect="non-scaling-stroke"/>` +
+      (start ? `<circle cx="${start[0] * V}" cy="${start[1] * V}" r="7"
+              fill="#fff" stroke="#b06bff" stroke-width="2"
+              vector-effect="non-scaling-stroke"/>` : '');
+  }).join('');
 }
 
 function renderModel(run, show) {
@@ -308,6 +328,10 @@ function renderLegend(layers, n, run) {
     keys.push(`<span class="key"><span class="swatch gaze"></span>measured gaze
       (camera)</span>`);
   }
+  if (layers.gaze_paths) {
+    keys.push(`<span class="key"><span class="swatch gaze"></span>gaze traces,
+      start ringed white</span>`);
+  }
   if (layers.model && run) {
     const extra = (run.samples_norm || []).length - 1;
     keys.push(`<span class="key"><span class="swatch model"></span>model prediction` +
@@ -358,6 +382,7 @@ async function tick() {
     state.layers.analysis && stats.ok && stats.model_vs_human,
     state.layers.prompt && model.config && model.config.prompt_text,
     state.layers.gaze && gaze.contributors,
+    state.layers.gaze_paths && gaze.contributors,
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -386,6 +411,7 @@ async function tick() {
   if (changed || resized) {
     drawHeatmap($('heat'), state.layers.heatmap ? data.points : []);
     renderGaze(gaze, state.layers.gaze);
+    renderGazePaths(gaze, state.layers.gaze_paths);
     renderPaths(data.paths, state.layers.paths);
     renderModel(model.run, state.layers.model);
     renderSyntheticWarning(model.run, state.layers.model);

@@ -98,7 +98,7 @@ class LAYERS:
     """Layer visibility. 'Clear' hides a layer; it never deletes data."""
 
     KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
-            "prompt": "0", "json": "0", "gaze": "0"}
+            "prompt": "0", "json": "0", "gaze": "0", "gaze_paths": "0"}
 
     @classmethod
     def current(cls) -> dict:
@@ -549,6 +549,7 @@ def api_markers():
 class Submission(BaseModel):
     round_id: int
     participant_uuid: str = Field(min_length=8, max_length=64)
+    device: Optional[dict] = None
     points: list[tuple[float, float]] = Field(min_length=1, max_length=50)
 
     @field_validator("points")
@@ -581,6 +582,8 @@ def api_submit_markers(sub: Submission, request: Request):
     participant_id = db.upsert_participant(
         sub.participant_uuid, request.headers.get("user-agent")
     )
+    if sub.device:
+        db.set_participant_device(participant_id, sub.device)
     n = db.save_markers(active["id"], participant_id, sub.points)
     db.mark_completed(active["id"], participant_id)
     return {"saved": n, "round_id": active["id"], "responses": db.count_responses(active["id"])}
@@ -599,8 +602,11 @@ class GazeSession(BaseModel):
     viewport_w: Optional[int] = None
     viewport_h: Optional[int] = None
     device_label: Optional[str] = None
+    device: Optional[dict] = None
     failure: Optional[str] = None
     diagnostics: Optional[dict] = None
+    residual_error: Optional[float] = None
+    bias: Optional[list[float]] = None
 
     @field_validator("grade")
     @classmethod
@@ -621,6 +627,8 @@ def api_gaze_session(session: GazeSession, request: Request):
     round_ = db.get_active_round()
     participant_id = db.upsert_participant(
         session.participant_uuid, request.headers.get("user-agent"))
+    if session.device:
+        db.set_participant_device(participant_id, session.device)
     payload = session.model_dump()
     session_id = db.create_gaze_session(
         participant_id, round_["id"] if round_ else None, payload)
@@ -839,73 +847,6 @@ def api_push_model_run(run: PushedRun, _: str = Depends(require_token)):
             "stored_as": payload["source"]}
 
 
-@app.get("/api/export.csv")
-def api_export_csv(_: str = Depends(require_token)):
-    """Every observation as one row — the shape stats packages want.
-
-    Tap marks, gaze samples and model fixations all land in the same table
-    with a `source` column, so a between-subjects comparison needs no
-    reshaping before it can be run.
-    """
-    import csv
-    import io as _io
-    import json as _json
-
-    buf = _io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["round_id", "image", "participant", "condition", "source",
-                "seq", "t_ms", "x", "y", "calibration_grade",
-                "calibration_error", "on_image"])
-
-    with db.connect() as conn:
-        images = {i["id"]: i for i in
-                  (dict(r) for r in conn.execute("SELECT * FROM images"))}
-        rounds = {r["id"]: r for r in
-                  (dict(x) for x in conn.execute("SELECT * FROM rounds"))}
-        uuids = {r["id"]: r["uuid"] for r in
-                 conn.execute("SELECT id, uuid FROM participants")}
-        conds = {(r["round_id"], r["participant_id"]): r["condition"]
-                 for r in conn.execute("SELECT * FROM assignments")}
-
-        for m in conn.execute("SELECT * FROM markers ORDER BY round_id, participant_id, seq"):
-            rnd = rounds.get(m["round_id"], {})
-            w.writerow([m["round_id"], images.get(rnd.get("image_id"), {}).get("filename", ""),
-                        uuids.get(m["participant_id"], ""),
-                        conds.get((m["round_id"], m["participant_id"]), "tap"),
-                        "tap", m["seq"], "", f"{m['x']:.6f}", f"{m['y']:.6f}", "", "", 1])
-
-        for s in conn.execute(
-                "SELECT s.*, g.participant_id, g.round_id, g.grade, g.mean_error "
-                "FROM gaze_samples s JOIN gaze_sessions g ON g.id = s.session_id "
-                "ORDER BY s.session_id, s.t_ms"):
-            rnd = rounds.get(s["round_id"], {})
-            w.writerow([s["round_id"], images.get(rnd.get("image_id"), {}).get("filename", ""),
-                        uuids.get(s["participant_id"], ""),
-                        conds.get((s["round_id"], s["participant_id"]), "gaze"),
-                        "gaze", "", s["t_ms"],
-                        "" if s["x"] is None else f"{s['x']:.6f}",
-                        "" if s["y"] is None else f"{s['y']:.6f}",
-                        s["grade"] or "",
-                        "" if s["mean_error"] is None else f"{s['mean_error']:.4f}",
-                        s["on_image"]])
-
-        for r in conn.execute("SELECT * FROM model_runs"):
-            try:
-                payload = _json.loads(r["coords_json"])
-            except Exception:
-                continue
-            img = images.get(r["image_id"], {}).get("filename", "")
-            for obs_i, path in enumerate(payload.get("samples_norm")
-                                         or [payload.get("scanpath_norm") or []]):
-                for seq, (x, y) in enumerate(path):
-                    w.writerow(["", img, f"model_sample_{obs_i}", "model", "model",
-                                seq, "", f"{x:.6f}", f"{y:.6f}", "", "", 1])
-
-    return Response(content=buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition":
-                             'attachment; filename="scanpath-long.csv"'})
-
-
 @app.get("/api/export")
 def api_export(_: str = Depends(require_token)):
     """Everything needed to reconstruct a session offline.
@@ -920,7 +861,7 @@ def api_export(_: str = Depends(require_token)):
         images = [dict(r) for r in conn.execute("SELECT * FROM images")]
         rounds = [dict(r) for r in conn.execute("SELECT * FROM rounds ORDER BY id")]
         participants = [dict(r) for r in conn.execute(
-            "SELECT id, uuid, first_seen FROM participants ORDER BY id")]
+            "SELECT id, uuid, first_seen, device_json FROM participants ORDER BY id")]
         markers = [dict(r) for r in conn.execute(
             "SELECT * FROM markers ORDER BY round_id, participant_id, seq")]
         runs = [dict(r) for r in conn.execute("SELECT * FROM model_runs ORDER BY id")]
@@ -930,6 +871,15 @@ def api_export(_: str = Depends(require_token)):
             r["payload"] = _json.loads(r.pop("coords_json"))
         except Exception:
             r["payload"] = None
+
+    # Browser and screen details, useful for explaining why one participant's
+    # tracking was worse than another's.
+    for pt in participants:
+        raw = pt.pop("device_json", None)
+        try:
+            pt["device"] = _json.loads(raw) if raw else None
+        except Exception:
+            pt["device"] = None
 
     return {
         "exported_at": db.utcnow(),

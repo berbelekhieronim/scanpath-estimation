@@ -101,6 +101,12 @@
         </select>
       </div>
       <div class="sub" id="condition-counts" style="margin-bottom:10px"></div>
+      <div class="sub" style="margin-bottom:8px">
+        <strong>Assignment sticks to a device.</strong> One phone keeps the
+        same condition for the whole round, which is what stops a person doing
+        both. To re-roll a test phone, open
+        <code>/?newid=1</code> on it, or start a fresh round.
+      </div>
       <div class="sub">
         Between-subjects: a participant does one or the other, never both.
         Tapping first would prime the looking and the measurement would no
@@ -161,6 +167,7 @@ const LAYERS = [
   { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
   { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
   { key: 'gaze',     name: 'Measured gaze', desc: 'Where the camera group actually looked' },
+  { key: 'gaze_paths', name: 'Gaze traces', desc: 'Each person\u2019s path over time, start ringed' },
   { key: 'model',    name: 'Model scanpath', desc: 'DeepGaze3.5-VL prediction' },
   { key: 'analysis', name: 'Agreement metrics', desc: 'Human vs model, with baselines' },
   { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was actually asked, in full' },

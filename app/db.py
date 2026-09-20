@@ -35,10 +35,11 @@ CREATE TABLE IF NOT EXISTS rounds (
 CREATE INDEX IF NOT EXISTS idx_rounds_image ON rounds(image_id);
 
 CREATE TABLE IF NOT EXISTS participants (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid       TEXT    NOT NULL UNIQUE,
-    first_seen TEXT    NOT NULL,
-    user_agent TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid        TEXT    NOT NULL UNIQUE,
+    first_seen  TEXT    NOT NULL,
+    user_agent  TEXT,
+    device_json TEXT
 );
 
 -- x and y are normalised to 0.0-1.0 against the image box, so a phone at
@@ -103,6 +104,7 @@ def init_db() -> None:
     init_gaze()
     init_gaze_samples()
     init_assignments()
+    _ensure_device_column()
 
 
 # --------------------------------------------------------------------------
@@ -248,6 +250,32 @@ def get_or_create_control_token() -> str:
 # --------------------------------------------------------------------------
 # participants and markers
 # --------------------------------------------------------------------------
+
+def set_participant_device(participant_id: int, device: dict) -> None:
+    """Browser, screen and viewport details.
+
+    Worth having: tracking quality varies a lot with screen size, pixel
+    ratio and browser, and without this there is no way to tell whether a
+    poor session was the room, the phone or the person.
+    """
+    import json
+
+    keep = {k: device.get(k) for k in (
+        "ua", "platform", "browser", "screen_w", "screen_h", "viewport_w",
+        "viewport_h", "dpr", "orientation", "touch_points", "languages",
+        "timezone", "reduced_motion", "color_scheme")}
+    with connect() as conn:
+        conn.execute("UPDATE participants SET device_json = ? WHERE id = ?",
+                     (json.dumps(keep), participant_id))
+
+
+def _ensure_device_column() -> None:
+    """Older databases predate device_json."""
+    with connect() as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(participants)")}
+        if "device_json" not in cols:
+            conn.execute("ALTER TABLE participants ADD COLUMN device_json TEXT")
+
 
 def upsert_participant(uuid: str, user_agent: Optional[str] = None) -> int:
     with connect() as conn:

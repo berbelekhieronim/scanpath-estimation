@@ -143,6 +143,7 @@
 <script type="module">
 import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
 import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS } from '/static/gaze/calibration.js';
+import { deviceInfo } from '/static/device.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -168,6 +169,10 @@ let tracker = null, calib = null, attempts = 0;
  * belt-and-braces fallback only; relying on it was how a completed recording
  * ended up with nowhere to go. */
 let gazeSessionId = null;
+
+/* Systematic offset measured at the validation points, subtracted from every
+   viewing sample. See Calibration.bias(). */
+let gazeBias = [0, 0];
 
 /* Crash-resilient reporting.
  *
@@ -372,6 +377,7 @@ async function begin() {
 }
 
 async function report(result) {
+  if (result.bias) gazeBias = result.bias;
   // Deliberately NOT stopping the tracker here. When calibration succeeds the
   // viewing stage runs next on this same page and needs the camera still
   // live; stopping it here is what produced a recording of zero samples.
@@ -390,12 +396,15 @@ async function report(result) {
         tracker_version: result.trackerVersion,
         mean_error: result.meanError,
         worst_error: result.worstError,
+        residual_error: result.residualError,
+        bias: result.bias,
         points_accepted: result.pointsAccepted,
         points_total: result.pointsTotal,
         validation: result.validation,
         viewport_w: window.innerWidth,
         viewport_h: window.innerHeight,
         device_label: navigator.userAgent.slice(0, 120),
+        device: deviceInfo(),
         failure: result.failure,
         diagnostics: result.diagnostics,
       }),
@@ -453,7 +462,12 @@ async function report(result) {
     // failed the only way out was the tap screen — which is why eye tracking
     // was never actually reached.
     overlay('Calibrated — now just look',
-      `${badge}<p>Typical error about <strong>${pct}%</strong> of the screen.</p>
+      `${badge}<p>Typical error about <strong>${
+         result.residualError != null
+           ? Math.round(result.residualError * 100) : pct}%</strong> of the screen${
+         result.bias && Math.hypot(result.bias[0], result.bias[1]) > 0.02
+           ? `, after correcting a ${Math.round(Math.hypot(result.bias[0],
+              result.bias[1]) * 100)}% offset` : ''}.</p>
        <p>Next: the picture appears for five seconds.
           <strong>Don't tap — just look at it naturally.</strong></p>
        <p style="font-size:.8125rem">Keep the phone exactly where it is.</p>
@@ -493,8 +507,11 @@ const VIEW_MS = Number(params.get('ms')) || 5000;
 function toImageCoords(s) {
   const r = $('vframe').getBoundingClientRect();
   if (!r.width || !r.height) return null;
-  const x = (s.x * window.innerWidth - r.left) / r.width;
-  const y = (s.y * window.innerHeight - r.top) / r.height;
+  // Remove the shared offset before mapping onto the image.
+  const vx = s.x - gazeBias[0];
+  const vy = s.y - gazeBias[1];
+  const x = (vx * window.innerWidth - r.left) / r.width;
+  const y = (vy * window.innerHeight - r.top) / r.height;
   const on = x >= 0 && x <= 1 && y >= 0 && y <= 1;
   return { t: Math.round(s.t), x: on ? +x.toFixed(4) : null,
            y: on ? +y.toFixed(4) : null, on_image: on };

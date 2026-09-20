@@ -118,10 +118,10 @@ const GROUPS = {
   'participant-links': [
     { path: '/qr', nm: 'Join screen', ds: 'QR code to project while people arrive' },
     { path: '/', nm: 'Participant view', ds: 'Routes each person to tapping or the camera' },
+    { path: '/?newid=1', nm: 'Participant view, fresh id', ds: 'Forget this device and be assigned again — for testing' },
   ],
   'data-links': [
-    { path: '/api/export.csv', nm: 'Download CSV', ds: 'Long format — one row per observation', locked: true, raw: true },
-    { path: '/api/export', nm: 'Download JSON', ds: 'Everything, including calibration detail', locked: true, raw: true },
+    { path: '/api/export', nm: 'Download JSON', ds: 'Everything: taps, gaze, calibration, device info', locked: true, raw: true },
     { path: '/admin', nm: 'Images', ds: 'Rescan the folder, choose the active image', locked: true },
   ],
   'diag-links': [
