@@ -18,7 +18,7 @@ export const CALIB_POINTS = [
 // Validation points sit between the calibration points, never on them —
 // scoring on a point the model was trained on measures memorisation.
 export const VALIDATION_POINTS = [
-  [0.32, 0.32], [0.68, 0.32], [0.32, 0.68], [0.68, 0.68],
+  [0.32, 0.32], [0.68, 0.68], [0.68, 0.32],
 ];
 
 /* Thresholds in fractions of viewport width.
@@ -64,8 +64,13 @@ export class Calibration {
     this.onPhase = opts.onPhase || (() => {});
     this.onPoint = opts.onPoint || (() => {});
     this.onProgress = opts.onProgress || (() => {});
-    this.settleMs = opts.settleMs ?? 250;
-    this.sampleMs = opts.sampleMs ?? 900;
+    this.settleMs = opts.settleMs ?? 150;
+    this.sampleMs = opts.sampleMs ?? 700;
+    // If samples stop arriving the run must end with a message, never hang.
+    // Upstream's frame loop exits permanently when the video element pauses —
+    // which mobile browsers do to off-screen video — so this is a real state,
+    // not a defensive nicety.
+    this.stallMs = opts.stallMs ?? 15000;
     this.shuffle = opts.shuffle !== false;
 
     this.phase = PHASE.IDLE;
@@ -75,7 +80,15 @@ export class Calibration {
     this.validation = [];
     this._resolveTap = null;
 
+    this.lastSampleAt = 0;
+    this.lastFaceAt = 0;
+    this.framesSeen = 0;
+    this.facesSeen = 0;
+
     this._onSample = (s) => {
+      this.framesSeen++;
+      this.lastSampleAt = performance.now();
+      if (s.ok) { this.facesSeen++; this.lastFaceAt = this.lastSampleAt; }
       if (s.ok && s.x != null && s.state !== 'closed') this.samples.push(s);
       if (this.samples.length > 400) this.samples.shift();
     };
@@ -92,7 +105,32 @@ export class Calibration {
   }
 
   _awaitTap() {
-    return new Promise((resolve) => { this._resolveTap = resolve; });
+    return new Promise((resolve, reject) => {
+      this._resolveTap = resolve;
+      const check = setInterval(() => {
+        if (!this._resolveTap) { clearInterval(check); return; }
+        const since = performance.now() - this.lastFaceAt;
+        if (this.lastFaceAt && since > this.stallMs) {
+          clearInterval(check);
+          this._resolveTap = null;
+          reject(new StallError('tracking stopped'));
+        }
+      }, 1000);
+      const orig = this._resolveTap;
+      this._resolveTap = () => { clearInterval(check); orig(); };
+    });
+  }
+
+  diagnostics() {
+    return {
+      framesSeen: this.framesSeen,
+      facesSeen: this.facesSeen,
+      faceRate: this.framesSeen ? this.facesSeen / this.framesSeen : 0,
+      msSinceFace: this.lastFaceAt ? Math.round(performance.now() - this.lastFaceAt) : null,
+      phase: this.phase,
+      accepted: this.accepted,
+      rejected: this.rejected.length,
+    };
   }
 
   _recentMean(sinceMs) {
@@ -114,6 +152,21 @@ export class Calibration {
     };
 
     try {
+      return await this._run();
+    } catch (err) {
+      if (err instanceof StallError) {
+        this._setPhase(PHASE.FAILED, { reason: 'stalled' });
+        return this.result('stalled');
+      }
+      this._setPhase(PHASE.FAILED, { reason: 'error', error: String(err) });
+      return this.result('error');
+    } finally {
+      this.tracker.onSample = prevHandler || (() => {});
+    }
+  }
+
+  async _run() {
+    {
       this._setPhase(PHASE.WAITING_FOR_FACE);
       const found = await this._waitForFace(12000);
       if (!found) {
@@ -167,8 +220,6 @@ export class Calibration {
 
       this._setPhase(PHASE.DONE);
       return this.result();
-    } finally {
-      this.tracker.onSample = prevHandler || (() => {});
     }
   }
 
@@ -190,6 +241,7 @@ export class Calibration {
       ok: grade === 'good' || grade === 'usable',
       grade,
       failure,
+      diagnostics: this.diagnostics(),
       meanError,
       worstError,
       pointsAccepted: this.accepted,
@@ -211,5 +263,7 @@ function shuffled(arr) {
   }
   return a;
 }
+
+export class StallError extends Error {}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

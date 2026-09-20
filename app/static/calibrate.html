@@ -58,7 +58,34 @@
   .grade.usable { background: var(--warn); color: #241a00; }
   .grade.poor, .grade.failed { background: var(--danger); color: #fff; }
 
-  video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  /* The camera preview must stay genuinely visible. Mobile browsers pause
+     off-screen or zero-opacity video, and upstream's frame loop exits for
+     good when the element pauses — which looks exactly like a hang. Keeping
+     it on screen also lets the participant see their own framing. */
+  video { position: absolute; top: calc(8px + env(safe-area-inset-top)); right: 8px;
+          width: 74px; height: 56px; object-fit: cover; border-radius: 7px;
+          border: 1px solid var(--border); transform: scaleX(-1);
+          background: #000; z-index: 3; pointer-events: none; }
+
+  /* Tap feedback. There is a delay between tapping and the next target, and
+     without an immediate acknowledgement people tap again, which upstream's
+     1000 ms debounce then silently drops. */
+  .target.tapped::after { transform: scale(1.7); background: #fff; }
+  .target.tapped::before { border-color: #fff; opacity: 1; }
+  .ripple { position: absolute; border-radius: 50%; pointer-events: none;
+            border: 3px solid var(--accent); z-index: 5;
+            animation: ripple .45s ease-out forwards; }
+  @keyframes ripple { from { width: 20px; height: 20px; margin: -10px 0 0 -10px; opacity: .9 }
+                      to   { width: 130px; height: 130px; margin: -65px 0 0 -65px; opacity: 0 } }
+  @media (prefers-reduced-motion: reduce) { .ripple { animation-duration: .01s } }
+
+  .face-chip { position: absolute; z-index: 3; left: 8px;
+               top: calc(8px + env(safe-area-inset-top));
+               font-size: 0.6875rem; padding: 4px 9px; border-radius: 999px;
+               background: var(--surface); border: 1px solid var(--border);
+               color: var(--muted); }
+  .face-chip.ok { border-color: var(--ok); color: var(--ok); }
+  .face-chip.bad { border-color: var(--danger); color: var(--danger); }
 </style>
 </head>
 <body>
@@ -67,9 +94,10 @@
 
   <div class="banner" id="banner">
     <h1 id="title">Setting up</h1>
-    <p id="hint">Hold the phone comfortably and keep still.</p>
+    <p id="hint">Rest the phone on the desk and keep it there.</p>
   </div>
 
+  <div class="face-chip" id="face-chip">starting…</div>
   <div class="target hidden" id="target"><div class="pulse"></div></div>
   <div class="progress" id="progress"></div>
 
@@ -77,11 +105,13 @@
     <div>
       <h2 id="ov-title">Let's measure where you look</h2>
       <p id="ov-body">
-        You'll see a dot move around the screen. <strong>Look straight at it,
-        then tap it.</strong> Nine times, then four quick checks.
+        <strong>Rest your phone on the desk</strong> — propped or flat, just not
+        in your hand. It works noticeably better, and it is quicker.
       </p>
-      <p style="font-size:.8125rem">Hold the phone still, at comfortable reading
-        distance, and try to keep it there throughout.</p>
+      <p>A dot will move around the screen. <strong>Look straight at it, then
+        tap it.</strong> Twelve times, about a minute.</p>
+      <p style="font-size:.8125rem">Whatever position you choose, keep it the
+        same until the end.</p>
       <button class="primary" id="ov-btn">Start</button>
     </div>
   </div>
@@ -107,6 +137,28 @@ function participantUuid() {
 }
 
 let tracker = null, calib = null, attempts = 0;
+
+/* Immediate acknowledgement of a tap.
+ *
+ * There is up to a second between tapping and the next target appearing
+ * (upstream debounces calibration points at 1000 ms). Without feedback people
+ * assume the tap missed and tap again — and the second tap is exactly what
+ * gets silently dropped. */
+function acknowledgeTap(e) {
+  const t = $('target');
+  if (!t.classList.contains('hidden')) {
+    t.classList.add('tapped');
+    setTimeout(() => t.classList.remove('tapped'), 180);
+  }
+  const r = document.createElement('div');
+  r.className = 'ripple';
+  r.style.left = (e.clientX || 0) + 'px';
+  r.style.top = (e.clientY || 0) + 'px';
+  $('cal').appendChild(r);
+  setTimeout(() => r.remove(), 480);
+  // A short buzz where supported. Silent no-op on iOS, which is fine.
+  try { navigator.vibrate && navigator.vibrate(12); } catch {}
+}
 
 function overlay(title, bodyHtml, btnLabel, onClick) {
   $('ov-title').textContent = title;
@@ -147,13 +199,13 @@ async function begin() {
     onPhase: (phase) => {
       if (phase === PHASE.WAITING_FOR_FACE) {
         $('title').textContent = 'Looking for your face';
-        $('hint').textContent = 'Hold the phone in front of you, with some light on your face.';
+        $('hint').textContent = 'Point the camera at your face, with some light on it.';
       } else if (phase === PHASE.CALIBRATING) {
         $('title').textContent = 'Look at the dot, then tap it';
-        $('hint').textContent = 'Nine of these. Keep the phone still.';
+        $('hint').textContent = 'Nine of these. Do not move the phone.';
       } else if (phase === PHASE.VALIDATING) {
         $('title').textContent = 'Checking the result';
-        $('hint').textContent = 'Four more — look, then tap. Hold your gaze a moment.';
+        $('hint').textContent = 'Three checks — look at it a moment, then tap.';
       }
     },
     onPoint: (i, total, xy, kind) => {
@@ -167,13 +219,26 @@ async function begin() {
   });
 
   // Tapping anywhere counts — a participant aiming at a 64px target while
-  // also trying to hold their gaze on it will miss, and a missed tap that
-  // does nothing reads as the app being broken.
+  // also holding their gaze on it will miss, and a missed tap that does
+  // nothing reads as the app being broken.
   $('cal').addEventListener('pointerdown', (e) => {
     if (!$('overlay').classList.contains('hidden')) return;
     e.preventDefault();
+    acknowledgeTap(e);
     calib.tap();
   });
+
+  // Live face indicator, so a stall is visible while it is happening rather
+  // than only in the result.
+  clearInterval(window._faceTimer);
+  window._faceTimer = setInterval(() => {
+    const d = calib.diagnostics();
+    const chip = $('face-chip');
+    if (!d.framesSeen) { chip.textContent = 'starting…'; chip.className = 'face-chip'; return; }
+    const stale = d.msSinceFace == null || d.msSinceFace > 1500;
+    chip.textContent = stale ? 'no face' : `face ${Math.round(d.faceRate * 100)}%`;
+    chip.className = 'face-chip ' + (stale ? 'bad' : 'ok');
+  }, 500);
 
   const result = await calib.run();
   $('target').classList.add('hidden');
@@ -202,16 +267,34 @@ async function report(result) {
         viewport_h: window.innerHeight,
         device_label: navigator.userAgent.slice(0, 120),
         failure: result.failure,
+        diagnostics: result.diagnostics,
       }),
     });
   } catch { /* the result still gets shown; storage is best-effort here */ }
 
   const badge = `<span class="grade ${result.grade}">${result.grade}</span>`;
 
+  clearInterval(window._faceTimer);
+  const d = result.diagnostics || {};
+  const diagLine = d.framesSeen
+    ? `<p style="font-size:.75rem;color:var(--muted)">Frames ${d.framesSeen},
+       face found ${Math.round((d.faceRate || 0) * 100)}%, points accepted
+       ${result.pointsAccepted}/${result.pointsTotal}.</p>` : '';
+
+  if (result.failure === 'stalled' || result.failure === 'error') {
+    overlay('Tracking stopped partway',
+      `${badge}<p>The camera feed stopped sending frames. On a phone this
+       usually means the browser paused the video — switching apps or locking
+       the screen will do it.</p>${diagLine}`,
+      attempts < 2 ? 'Try again' : 'Continue without',
+      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+    return;
+  }
+
   if (result.failure === 'no_face') {
     overlay('We could not see your face',
-      `${badge}<p>The camera never found a face. The usual reason is not enough
-       light — a dark room defeats it.</p>`,
+      `${badge}<p>The camera never found a face. The usual reasons are not
+       enough light on your face, or the phone not pointing at you.</p>${diagLine}`,
       attempts < 2 ? 'Try again' : 'Continue without', 
       attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
     return;
@@ -220,7 +303,7 @@ async function report(result) {
   if (result.ok) {
     overlay('Calibrated',
       `${badge}<p>Typical error about <strong>${pct}%</strong> of the screen
-       across the four checks.</p>
+       across the checks.</p>${diagLine}
        <p style="font-size:.8125rem">That is the expected range for a phone
        camera. It is enough to tell broad regions apart, not fine detail.</p>`,
       'Continue', () => { location.href = '/?calibrated=1'; });
@@ -228,8 +311,9 @@ async function report(result) {
     overlay('Tracking is not accurate enough',
       `${badge}<p>Typical error about <strong>${pct ?? '—'}%</strong> of the
        screen, which is too high to use.</p>
-       <p style="font-size:.8125rem">More light on your face, holding the phone
-       steadier, and keeping it at a constant distance all help.</p>`,
+       <p style="font-size:.8125rem">Resting the phone on a surface rather than
+       holding it helps most. More light on your face, and keeping a constant
+       distance, also help.</p>${diagLine}`,
       attempts < 2 ? 'Try again' : 'Continue without',
       attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
   }

@@ -463,6 +463,7 @@ class GazeSession(BaseModel):
     viewport_h: Optional[int] = None
     device_label: Optional[str] = None
     failure: Optional[str] = None
+    diagnostics: Optional[dict] = None
 
     @field_validator("grade")
     @classmethod

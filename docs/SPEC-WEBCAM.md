@@ -477,6 +477,42 @@ coordinates shared, no identity, camera released afterwards — with declining
 presented as an equal-weight button that keeps the participant in the demo.
 The choice is remembered locally so nobody is asked twice.
 
+### 13.6 First real-device test, 2026-09-20
+
+Tested on a phone. It hung during calibration and produced no result at all,
+which is the worst possible failure: nothing to diagnose from. Four changes
+came out of it.
+
+**Resting the phone beats holding it, by a lot.** The owner's observation, and
+it changes the instruction rather than the code: the opening screen now says
+to put the phone on the desk. §8 listed handheld drift as a risk; this
+promotes it from a risk to a design decision. For a seated audience, "rest
+your phone on the desk" is easy to ask for and materially improves the data.
+It also makes the tapping less tiring, which was the other complaint.
+
+**The hang is now impossible to reproduce silently.** Upstream's frame loop
+exits permanently the moment the video element pauses, and mobile browsers
+pause off-screen or zero-opacity video — which is exactly what the page had,
+a 1x1 transparent element. It is now a visible 74x56 thumbnail, which also
+lets the participant see their own framing. On top of that a watchdog ends the
+run with a message if faces stop arriving for 15 seconds, and every exit from
+`run()` now returns a result. A hang with nothing to look at should not happen
+again; if tracking does stop, the screen says so and reports frames seen, face
+rate and points accepted.
+
+**Taps are acknowledged immediately** — the target flashes, a ripple expands
+from the finger, and the phone buzzes where supported. This is not decoration.
+Upstream debounces calibration points at 1000 ms, so an unacknowledged tap
+invites a second one, and the second is precisely the one silently dropped.
+
+**Twelve taps instead of thirteen**, with tighter settle and sample windows.
+Validation dropped from four points to three. Nine calibration points stay,
+since that is what the tracker's few-shot adaptation expects.
+
+A live face indicator now sits in the corner during calibration, so a stall is
+visible while it happens rather than only in the result, and the diagnostics
+are stored with each session.
+
 ### 13.5 Verified, and not
 
 Driven end to end in a headless browser against the mock backend: consent flow

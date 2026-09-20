@@ -45,9 +45,14 @@ def _points(name):
     return [[float(v) for v in m] for m in re.findall(r"\[([\d.]+),\s*([\d.]+)\]", body)]
 
 
-def test_nine_calibration_points_and_four_validation_points():
+def test_calibration_and_validation_point_counts():
+    """Nine calibration points because the tracker's few-shot adaptation
+    expects that many. Three validation points because twelve taps total was
+    already reported as feeling long on a phone."""
     assert len(_points("CALIB_POINTS")) == 9
-    assert len(_points("VALIDATION_POINTS")) == 4
+    assert len(_points("VALIDATION_POINTS")) == 3
+    total = len(_points("CALIB_POINTS")) + len(_points("VALIDATION_POINTS"))
+    assert total <= 12, "more taps than this loses the room"
 
 
 def test_validation_points_are_never_calibration_points():
@@ -173,3 +178,66 @@ def test_consent_states_the_promises_plainly(client):
 def test_calibrate_releases_the_camera_on_hide(client):
     text = client.get("/calibrate").text
     assert "visibilitychange" in text and "pagehide" in text
+
+
+
+# --- stall handling (added after a real phone hung with no result) ---------
+
+def test_calibration_has_a_stall_watchdog():
+    """Upstream's frame loop exits permanently when the video element pauses,
+    which mobile browsers do to off-screen video. Without a watchdog that
+    presents as an indefinite hang with no result, which is what happened."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "StallError" in src
+    assert "stallMs" in src
+    assert re.search(r"this\.stallMs\s*=\s*opts\.stallMs\s*\?\?\s*\d+", src)
+
+
+def test_run_always_returns_a_result():
+    """Every path out of run() must produce something reportable."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    run = src[src.index("  async run()"):src.index("  async _run()")]
+    assert "catch" in run and "return this.result(" in run
+
+
+def test_calibration_exposes_live_diagnostics():
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "diagnostics()" in src
+    for field in ("framesSeen", "facesSeen", "faceRate", "msSinceFace"):
+        assert field in src, field
+
+
+def test_page_keeps_the_video_visible():
+    """An invisible video element gets paused by mobile browsers, and
+    upstream's frame loop never restarts after a pause."""
+    src = (STATIC / "calibrate.html").read_text()
+    style = src[src.index("<style>"):src.index("</style>")]
+    video_rule = style[style.index("video {"):]
+    assert "opacity: 0" not in video_rule.split("}")[0]
+    assert "display: none" not in video_rule.split("}")[0]
+
+
+def test_taps_are_acknowledged_immediately():
+    """Upstream debounces calibration points at 1000ms, so an unacknowledged
+    tap invites a second one that is then silently dropped."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "acknowledgeTap" in src
+    assert "ripple" in src
+    assert "navigator.vibrate" in src
+
+
+def test_instructions_tell_people_to_rest_the_phone():
+    """Measured on a real device: resting beats holding, by a lot."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "Rest your phone" in src
+
+
+def test_diagnostics_are_persisted(client):
+    r = client.post("/api/gaze/session", json=session(
+        "failed", failure="stalled",
+        diagnostics={"framesSeen": 120, "facesSeen": 4, "faceRate": 0.03}))
+    assert r.status_code == 200
+    from app import db
+    with db.connect() as conn:
+        row = conn.execute("SELECT diagnostics_json FROM gaze_sessions").fetchone()
+    assert json.loads(row["diagnostics_json"])["framesSeen"] == 120

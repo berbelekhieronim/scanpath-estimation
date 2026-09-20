@@ -411,6 +411,7 @@ CREATE TABLE IF NOT EXISTS gaze_sessions (
     points_accepted   INTEGER,
     points_total      INTEGER,
     validation_json   TEXT,
+    diagnostics_json  TEXT,
     viewport_w        INTEGER,
     viewport_h        INTEGER,
     device_label      TEXT,
@@ -442,15 +443,16 @@ def create_gaze_session(participant_id: int, round_id: Optional[int],
         cur = conn.execute(
             "INSERT INTO gaze_sessions (round_id, participant_id, started_at, "
             "tracker, tracker_version, grade, mean_error, worst_error, "
-            "points_accepted, points_total, validation_json, viewport_w, "
-            "viewport_h, device_label, excluded, exclusion_reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "points_accepted, points_total, validation_json, diagnostics_json, "
+            "viewport_w, viewport_h, device_label, excluded, exclusion_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 round_id, participant_id, utcnow(),
                 payload.get("tracker"), payload.get("tracker_version"), grade,
                 payload.get("mean_error"), payload.get("worst_error"),
                 payload.get("points_accepted"), payload.get("points_total"),
                 json.dumps(payload.get("validation") or []),
+                json.dumps(payload.get("diagnostics") or {}),
                 payload.get("viewport_w"), payload.get("viewport_h"),
                 (payload.get("device_label") or "")[:120],
                 excluded,
