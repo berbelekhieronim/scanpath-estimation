@@ -93,17 +93,11 @@
     <div class="card section">
       <h2>Model</h2>
       <div id="model-status" class="sub" style="margin-bottom:12px">…</div>
-      <div class="row" style="margin-bottom:10px">
+      <div class="row" style="margin-bottom:8px">
         <label style="min-width:110px">Task</label>
-        <select id="model-mode" style="max-width:260px">
-          <option value="freeview">Free viewing</option>
-          <option value="search">Visual search</option>
-        </select>
+        <select id="probe" style="max-width:320px"></select>
       </div>
-      <div class="row" id="target-row" style="margin-bottom:10px; display:none">
-        <label style="min-width:110px">Target</label>
-        <select id="model-target" style="max-width:260px"></select>
-      </div>
+      <div class="sub" id="probe-note" style="margin-bottom:10px"></div>
       <div class="row">
         <button id="rescan-model">Reload runs from disk</button>
       </div>
@@ -142,15 +136,15 @@ const TOKEN_KEY = 'scanpath_control_token';
 let token = localStorage.getItem(TOKEN_KEY) ||
             new URLSearchParams(location.search).get('k') || '';
 let state = null;
-const COCO_TARGETS = ['bottle','bowl','car','chair','clock','cup','fork','keyboard',
-  'knife','laptop','microwave','mouse','oven','potted plant','sink','stop sign',
-  'toilet','tv'];
+let PROBES = [];
 
 const LAYERS = [
   { key: 'heatmap',  name: 'Human heatmap', desc: 'Where the room said they would look' },
   { key: 'paths',    name: 'Individual paths', desc: 'Each person’s order, drawn faintly' },
   { key: 'model',    name: 'Model scanpath', desc: 'DeepGaze3.5-VL prediction' },
   { key: 'analysis', name: 'Agreement metrics', desc: 'Human vs model, with baselines' },
+  { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was actually asked, in full' },
+  { key: 'json',     name: 'Raw data (JSON)', desc: 'Full-screen overlay of the underlying data' },
 ];
 
 function notice(msg, kind = '') {
@@ -227,15 +221,14 @@ async function refresh() {
     }
     if (s.image) sel.value = String(s.image.id);
 
-    if ($('model-target').options.length === 0) {
-      $('model-target').innerHTML = COCO_TARGETS.map((t) =>
-        `<option value="${t}">${t}</option>`).join('');
+    if (!PROBES.length) {
+      PROBES = (await fetch('/api/probes').then((r) => r.json())).probes;
+      renderProbeOptions();
     }
-    if (document.activeElement !== $('model-mode')) {
-      $('model-mode').value = model.config.mode;
-      $('target-row').style.display = model.config.mode === 'search' ? '' : 'none';
-      if (model.config.target) $('model-target').value = model.config.target;
+    if (document.activeElement !== $('probe') && model.config.probe) {
+      $('probe').value = model.config.probe.id;
     }
+    renderProbeNote(model.config.probe);
     renderModelStatus(model);
   } catch {}
 }
@@ -264,7 +257,12 @@ function renderModelStatus(model) {
         <strong>SYNTHETIC placeholder data</strong> — not model output. The
         display shows a warning banner while this layer is on.</div>` : '') +
     `${r.n_fixations} fixations · ${n} sampled observer${n === 1 ? '' : 's'} ·
-     ${r.source} · <span class="sub">${r.model}</span>`;
+     ${r.source} · <span class="sub">${r.model}</span>
+     <details style="margin-top:10px"><summary style="cursor:pointer">Prompt used for this run</summary>
+     <pre style="white-space:pre-wrap; font-size:.75rem; background:var(--surface-2);
+          padding:10px; border-radius:6px; margin:8px 0 0">${
+       (r.prompt_text || '(not recorded)').replace(/[<>&]/g, (c) =>
+         ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</pre></details>`;
 }
 
 async function setModelConfig(patch) {
@@ -275,14 +273,25 @@ async function setModelConfig(patch) {
   } catch (e) { notice(e.message, 'err'); }
 }
 
-$('model-mode').addEventListener('change', (e) => {
-  const mode = e.target.value;
-  $('target-row').style.display = mode === 'search' ? '' : 'none';
-  setModelConfig({ mode, target: mode === 'search' ? $('model-target').value : '' });
-});
+function renderProbeOptions() {
+  const trained = PROBES.filter((p) => p.kind === 'trained');
+  const experimental = PROBES.filter((p) => p.kind === 'experimental');
+  const opt = (p) => `<option value="${p.id}">${p.label}</option>`;
+  $('probe').innerHTML =
+    `<optgroup label="Trained — validated">${trained.map(opt).join('')}</optgroup>` +
+    `<optgroup label="Experimental — off-distribution">${experimental.map(opt).join('')}</optgroup>`;
+}
 
-$('model-target').addEventListener('change', (e) =>
-  setModelConfig({ target: e.target.value }));
+function renderProbeNote(probe) {
+  if (!probe) { $('probe-note').textContent = ''; return; }
+  const warn = probe.kind === 'experimental';
+  $('probe-note').innerHTML = (warn
+    ? '<span style="color:var(--warn)"><strong>Experimental.</strong> The adapter never saw this task; ' +
+      'the model still returns coordinates but their quality is unvalidated.</span> '
+    : '<span style="color:var(--ok)"><strong>Trained.</strong></span> ') + probe.note;
+}
+
+$('probe').addEventListener('change', (e) => setModelConfig({ probe: e.target.value }));
 
 $('rescan-model').addEventListener('click', async () => {
   try {

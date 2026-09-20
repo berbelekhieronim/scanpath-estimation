@@ -29,6 +29,7 @@
     </div>
   </div>
 
+  <div class="prompt-panel" id="prompt-panel" hidden></div>
   <div class="analysis" id="analysis" hidden></div>
   <div class="legend" id="legend"></div>
 
@@ -117,6 +118,88 @@ function renderSyntheticWarning(run, show) {
   el.className = 'synthetic-warning';
   el.textContent = 'SYNTHETIC PLACEHOLDER DATA — NOT MODEL OUTPUT';
   document.body.appendChild(el);
+}
+
+function esc(s) {
+  return String(s).replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+}
+
+function renderPrompt(cfg, run, show) {
+  const el = $('prompt-panel');
+  if (!show || !cfg) { el.hidden = true; return; }
+  el.hidden = false;
+
+  // Prefer the prompt the stored run actually used; fall back to what the
+  // current configuration would send. They differ if the config changed
+  // after the run was made, and showing the run's own text is the honest one.
+  const text = (run && run.prompt_text) || cfg.prompt_text;
+  const probe = cfg.probe;
+  const kind = (run && run.prompt_kind === 'custom') ? 'experimental'
+             : (probe ? probe.kind : 'trained');
+  const task = probe ? probe.label
+             : (cfg.mode === 'freeview' ? 'Free viewing'
+                : `Searching for ${cfg.target || '—'}`);
+
+  el.innerHTML = `
+    <div class="ptop">
+      <span class="ptask">${esc(task)}</span>
+      <span class="pkind ${kind}">${kind === 'trained' ? 'Trained template' : 'Experimental'}</span>
+      ${probe ? `<span class="pnote">${esc(probe.note)}</span>` : ''}
+    </div>
+    <pre>${esc(text || 'No prompt available for this configuration.')}</pre>`;
+}
+
+const JSON_TABS = [
+  ['model', 'Model run'],
+  ['markers', 'Human taps'],
+  ['analysis', 'Agreement'],
+  ['state', 'Display state'],
+];
+let jsonTab = 'model';
+
+function highlight(obj) {
+  return esc(JSON.stringify(obj, null, 2))
+    .replace(/&quot;([^&]*?)&quot;(\s*:)/g, '<span class="k">"$1"</span>$2')
+    .replace(/:\s&quot;(.*?)&quot;/g, ': <span class="s">"$1"</span>')
+    .replace(/:\s(-?\d+\.?\d*)/g, ': <span class="n">$1</span>')
+    .replace(/:\s(true|false|null)/g, ': <span class="b">$1</span>');
+}
+
+async function renderJson(show) {
+  let el = document.getElementById('json-overlay');
+  if (!show) { if (el) el.remove(); return; }
+
+  let raw;
+  try { raw = await fetch('/api/raw').then((r) => r.json()); }
+  catch { return; }
+
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'json-overlay';
+    el.id = 'json-overlay';
+    el.innerHTML = `
+      <div class="jtop">
+        <div>
+          <h2>Raw data</h2>
+          <div class="jhint">Exactly what the display is drawn from — nothing hidden.</div>
+        </div>
+        <div class="json-tabs" id="json-tabs"></div>
+      </div>
+      <pre id="json-body"></pre>`;
+    document.body.appendChild(el);
+    document.getElementById('json-tabs').innerHTML = JSON_TABS.map(([k, label]) =>
+      `<button data-tab="${k}">${label}</button>`).join('');
+    document.getElementById('json-tabs').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      jsonTab = b.dataset.tab;
+      renderJson(true);
+    });
+  }
+
+  document.querySelectorAll('#json-tabs button').forEach((b) =>
+    b.classList.toggle('on', b.dataset.tab === jsonTab));
+  document.getElementById('json-body').innerHTML = highlight(raw[jsonTab]);
 }
 
 function fmt(v, digits = 2) {
@@ -253,6 +336,7 @@ async function tick() {
     data.paths.length && data.paths[data.paths.length - 1],
     model.run && [model.run.run_id, model.run.source, model.run.prompt_kind],
     state.layers.analysis && stats.ok && stats.model_vs_human,
+    state.layers.prompt && model.config && model.config.prompt_text,
   ]);
   const changed = signature !== lastSignature;
   lastSignature = signature;
@@ -274,6 +358,8 @@ async function tick() {
   $('count').textContent = data.count;
   $('count-label').textContent = data.count === 1 ? 'response' : 'responses';
 
+  renderJson(state.layers.json);
+
   const resized = sizeCanvas();
   if ($('heat').width === 0) { lastSignature = ''; return; }  // retry next tick
   if (changed || resized) {
@@ -282,6 +368,7 @@ async function tick() {
     renderModel(model.run, state.layers.model);
     renderSyntheticWarning(model.run, state.layers.model);
     renderExperimentalWarning(model.run, state.layers.model);
+    renderPrompt(model.config, model.run, state.layers.prompt);
     renderAnalysis(stats, state.layers.analysis);
     renderLegend(state.layers, data.count, model.run);
   }

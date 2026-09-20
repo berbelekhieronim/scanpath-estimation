@@ -68,8 +68,10 @@ def test_empty_round_returns_an_empty_shape_not_an_error(client):
 
 
 def test_default_layers(client):
+    """Only the human heatmap starts on; every reveal is a deliberate act."""
     layers = client.get("/api/state").json()["layers"]
-    assert layers == {"heatmap": True, "paths": False, "model": False, "analysis": False}
+    assert layers == {"heatmap": True, "paths": False, "model": False,
+                      "analysis": False, "prompt": False, "json": False}
 
 
 def test_layers_toggle_and_persist(client):

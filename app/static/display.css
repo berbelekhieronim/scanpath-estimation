@@ -105,3 +105,57 @@ body.has-synthetic .display { padding-top: 46px; }
   padding: 6px 16px; font-weight: 700; font-size: 0.8125rem;
 }
 body.has-experimental .display { padding-bottom: 40px; }
+
+/* Prompt panel — what the model was actually asked. */
+.prompt-panel {
+  flex: 0 0 auto; background: var(--surface); border: 1px solid var(--border);
+  border-left: 4px solid var(--accent); border-radius: 10px; padding: 13px 18px;
+}
+.prompt-panel .ptop {
+  display: flex; align-items: center; gap: 12px;
+  flex-wrap: wrap; margin-bottom: 9px;
+}
+.prompt-panel .ptask { font-size: 1.125rem; font-weight: 600; }
+.prompt-panel .pkind {
+  font-size: 0.6875rem; text-transform: uppercase; letter-spacing: .06em;
+  border-radius: 4px; padding: 3px 9px; font-weight: 700;
+}
+.pkind.trained { background: var(--ok); color: #05261a; }
+.pkind.experimental { background: var(--warn); color: #241a00; }
+.prompt-panel .pnote { color: var(--muted); font-size: 0.875rem; }
+.prompt-panel pre {
+  margin: 0; white-space: pre-wrap; word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(0.6875rem, 1vw, 0.875rem); line-height: 1.5;
+  color: var(--text); background: var(--surface-2);
+  border-radius: 7px; padding: 12px 14px; max-height: 24vh; overflow: auto;
+}
+
+/* Raw JSON overlay — for showing that the picture comes from data. */
+.json-overlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(8, 9, 13, .97);
+  display: flex; flex-direction: column; padding: 22px 26px; gap: 12px;
+}
+.json-overlay .jtop {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.json-overlay h2 { margin: 0; font-size: 1.25rem; }
+.json-overlay .jhint { color: var(--muted); font-size: 0.875rem; }
+.json-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.json-tabs button {
+  padding: 6px 14px; font-size: 0.875rem; border-radius: 999px;
+}
+.json-tabs button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.json-overlay pre {
+  flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0;
+  background: #0f1117; border: 1px solid var(--border); border-radius: 9px;
+  padding: 16px 18px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(0.6875rem, .95vw, 0.9375rem); line-height: 1.55;
+  color: #cfd6e6; white-space: pre; tab-size: 2;
+}
+.json-overlay .k { color: #7fb3ff; }
+.json-overlay .s { color: #9ede9a; }
+.json-overlay .n { color: #f0b86e; }
+.json-overlay .b { color: #d78ff0; }

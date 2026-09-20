@@ -192,9 +192,12 @@ off-template quality is unvalidated and degrades silently. Runs made this way
 are tagged `prompt_kind: "custom"`, the display shows a warning strip, and
 `/control` lets you expand the exact prompt used.
 
-The strongest supported contrast needs no custom prompting: run free-viewing,
-then `--mode search --target car`, and show the path reorganise toward the
-vehicle.
+A catalogue of named probes is built in — see `tools/precompute.py
+--list-probes`. Two are trained (*Free viewing*, *Cars*); the other eight
+(*What shouldn't be here*, *People*, *Roads*, *Count buildings*, *Find living
+things*, *Danger*, *Music*, *Robots*) are experimental and labelled as such
+throughout the UI. Keeping a trained probe alongside them is deliberate: it is
+the control the others are compared against.
 
 ## What has not been verified
 

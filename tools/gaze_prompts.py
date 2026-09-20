@@ -15,7 +15,7 @@ to confirm these copies still match upstream.
 """
 
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 BASE_MODEL = "OpenGVLab/InternVL3_5-8B-HF"
 
@@ -62,6 +62,103 @@ def build_search_prompt(target: str, n: int) -> str:
     )
 
 
+def build_probe_prompt(phrase: str, n: int) -> str:
+    """An experimental task prompt, built on the trained search scaffolding.
+
+    A bare instruction ("danger") would not produce coordinates at all — the
+    model has to be told the output format. So a probe keeps the search
+    template's structure byte-for-byte and substitutes only the task clause.
+    That stays as close to the trained distribution as a custom task can,
+    which maximises the chance of usable output.
+
+    It is still off-distribution, and is labelled as such everywhere it
+    surfaces.
+    """
+    return (
+        f"Analyze this image and predict a human eye movement scanpath while {phrase}.\n"
+        f"A scanpath is the temporal sequence of fixation points showing where a person looks over time.\n"
+        f"Consider the task, visual saliency, and how attention naturally flows during visual search.\n"
+        f"\n"
+        f"Generate a scanpath of exactly {n} fixation points in temporal order as a list of tuples: (x, y)\n"
+        f"- x: horizontal position (0-100, 0=left, 100=right)\n"
+        f"- y: vertical position (0-100, 0=top, 100=bottom)\n"
+        f"- Points should be ordered from first fixation to last fixation.\n"
+        f"\n"
+        f"Output ONLY a Python list of tuples:\n"
+        f"[(51,46),(38,28),...]"
+    )
+
+
+# The probe catalogue offered in the UI.
+#
+# `kind` is the honest bit. "trained" probes use a template the LoRA was
+# fine-tuned on, with a target from COCO-Search18. "experimental" probes ask
+# for something the adapter never saw; the model still returns coordinates —
+# it always does — but their quality is unvalidated.
+#
+# Keeping one trained probe (cars) alongside the experimental ones is
+# deliberate: it is the control the others can be compared against.
+PROBES = [
+    {"id": "freeview", "label": "Free viewing", "kind": "trained",
+     "mode": "freeview", "target": None,
+     "note": "The trained free-viewing template. No task given."},
+
+    {"id": "cars", "label": "Cars", "kind": "trained",
+     "mode": "search", "target": "car",
+     "note": "A trained COCO-Search18 target — the on-distribution control."},
+
+    {"id": "unexpected", "label": "What shouldn't be here", "kind": "experimental",
+     "mode": "probe", "target": "unexpected",
+     "phrase": "looking for anything that does not belong in this scene",
+     "note": "Scene-violation probe. Strong on an image with an incongruous object."},
+
+    {"id": "people", "label": "People", "kind": "experimental",
+     "mode": "probe", "target": "people",
+     "phrase": "searching for people",
+     "note": "COCO-Search18 has no person category, so this is untrained."},
+
+    {"id": "roads", "label": "Roads", "kind": "experimental",
+     "mode": "probe", "target": "roads",
+     "phrase": "searching for the road",
+     "note": "A region rather than an object — untrained."},
+
+    {"id": "count_buildings", "label": "Count buildings", "kind": "experimental",
+     "mode": "probe", "target": "count_buildings",
+     "phrase": "counting the buildings",
+     "note": "Counting drives a different scanpath shape than searching."},
+
+    {"id": "living", "label": "Find living things", "kind": "experimental",
+     "mode": "probe", "target": "living",
+     "phrase": "searching for living things",
+     "note": "A category, not an object class."},
+
+    {"id": "danger", "label": "Danger", "kind": "experimental",
+     "mode": "probe", "target": "danger",
+     "phrase": "looking for anything dangerous",
+     "note": "Abstract and judgement-based — well off-distribution."},
+
+    {"id": "music", "label": "Music", "kind": "experimental",
+     "mode": "probe", "target": "music",
+     "phrase": "searching for anything related to music",
+     "note": "Usually absent from a street scene — a useful negative control."},
+
+    {"id": "robots", "label": "Robots", "kind": "experimental",
+     "mode": "probe", "target": "robots",
+     "phrase": "searching for robots",
+     "note": "Also usually absent. Compare with 'music' for consistency."},
+]
+
+PROBES_BY_ID = {p["id"]: p for p in PROBES}
+
+
+def probe_for(mode: str, target: Optional[str] = None) -> Optional[dict]:
+    """Find the catalogue entry matching a stored (mode, target) pair."""
+    for p in PROBES:
+        if p["mode"] == mode and (p["target"] or None) == (target or None):
+            return p
+    return None
+
+
 def build_prompt(mode: str, n: int, target: str = None) -> str:
     if mode == "freeview":
         return build_freeview_prompt(n)
@@ -69,6 +166,11 @@ def build_prompt(mode: str, n: int, target: str = None) -> str:
         if not target:
             raise ValueError("search mode requires a target")
         return build_search_prompt(target, n)
+    if mode == "probe":
+        probe = PROBES_BY_ID.get(target) or probe_for("probe", target)
+        if not probe:
+            raise ValueError(f"unknown probe: {target!r}")
+        return build_probe_prompt(probe["phrase"], n)
     raise ValueError(f"unknown mode: {mode!r}")
 
 

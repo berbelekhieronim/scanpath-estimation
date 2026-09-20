@@ -68,9 +68,15 @@ def main():
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--only", nargs="*", help="Limit to these image filenames")
     ap.add_argument("--modes", nargs="+", default=["freeview"],
-                    choices=["freeview", "search"])
+                    choices=["freeview", "search", "probe"])
     ap.add_argument("--targets", nargs="*", default=["car"],
                     help="Search targets, used when 'search' is in --modes")
+    ap.add_argument("--probes", nargs="*",
+                    help="Probe ids to run (see --list-probes). Implies 'probe' mode.")
+    ap.add_argument("--all-probes", action="store_true",
+                    help="Run every probe in the catalogue")
+    ap.add_argument("--list-probes", action="store_true",
+                    help="Print the probe catalogue and exit")
     ap.add_argument("--num-fixations", type=int, default=5,
                     help="Match the participant tap count for clean comparison")
     ap.add_argument("--samples", type=int, default=10, help="Virtual observers")
@@ -84,8 +90,26 @@ def main():
     ap.add_argument("--force", action="store_true", help="Re-run existing outputs")
     args = ap.parse_args()
 
+    if args.list_probes:
+        print(f"{'id':18s} {'kind':14s} label")
+        for pr in gp.PROBES:
+            print(f"{pr['id']:18s} {pr['kind']:14s} {pr['label']}")
+            print(f"{'':18s} {'':14s} {pr['note']}")
+        return 0
+
     if not args.synthetic and not args.repo:
         ap.error("--repo is required (or use --synthetic for placeholder output)")
+
+    # Probe ids expand into (mode, target) pairs.
+    probe_ids = list(args.probes or [])
+    if args.all_probes:
+        probe_ids = [pr["id"] for pr in gp.PROBES]
+    probe_jobs = []
+    for pid in probe_ids:
+        pr = gp.PROBES_BY_ID.get(pid)
+        if not pr:
+            ap.error(f"unknown probe {pid!r}; see --list-probes")
+        probe_jobs.append((pr["mode"], pr["target"]))
 
     images_dir, out_dir = Path(args.images_dir), Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -99,10 +123,14 @@ def main():
 
     jobs = []
     for img in images:
-        for mode in args.modes:
-            targets = args.targets if mode == "search" else [None]
-            for target in targets:
+        if probe_jobs:
+            for mode, target in probe_jobs:
                 jobs.append((img, mode, target))
+        else:
+            for mode in args.modes:
+                targets = args.targets if mode == "search" else [None]
+                for target in targets:
+                    jobs.append((img, mode, target))
 
     print(f"{len(images)} image(s) x {len(jobs) // len(images)} config(s) "
           f"= {len(jobs)} run(s), {args.samples} sample(s) each")
@@ -147,6 +175,7 @@ def main():
                 import predict_mps
                 from PIL import Image
 
+                # Probes are task-directed, so they use the search adapter.
                 adapter = ("combined_adapter" if mode == "freeview"
                            else "visual_search_adapter")
                 if adapter != loaded_adapter:
@@ -179,7 +208,9 @@ def main():
             "seed": args.seed,
             "temperature": args.temperature,
             "prompt_text": prompt_text,
-            "prompt_kind": "trained",
+            "prompt_kind": ("trained" if mode in ("freeview", "search")
+                            else "experimental_probe"),
+            "probe_id": (gp.probe_for(mode, target) or {}).get("id"),
             "scanpath_grid": samples[0],
             "scanpath_norm": gp.grid_to_norm(samples[0]),
             "samples_grid": samples,

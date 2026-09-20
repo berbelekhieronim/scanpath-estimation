@@ -124,7 +124,8 @@ def main():
     ap.add_argument("--repo", required=True,
                     help="Path to a DeepGaze3.5-VL checkout (for the adapters)")
     ap.add_argument("--image", required=True)
-    ap.add_argument("--mode", choices=["freeview", "search"], default="freeview")
+    ap.add_argument("--mode", choices=["freeview", "search", "probe"], default="freeview")
+    ap.add_argument("--probe", help="Probe id; sets --mode and --target together")
     ap.add_argument("--target", help="Search target (required for --mode search)")
     ap.add_argument("--num-fixations", type=int, default=None,
                     help="Default 8 for freeview, 3 for search (upstream defaults)")
@@ -146,6 +147,16 @@ def main():
     ap.add_argument("--output", help="Write result JSON here")
     args = ap.parse_args()
 
+    if args.probe:
+        pr = gp.PROBES_BY_ID.get(args.probe)
+        if not pr:
+            ap.error(f"unknown probe {args.probe!r}; choices: "
+                     f"{', '.join(p['id'] for p in gp.PROBES)}")
+        args.mode, args.target = pr["mode"], pr["target"]
+        if pr["kind"] == "experimental":
+            print(f"NOTE: probe '{pr['id']}' is experimental — the adapter was "
+                  f"never trained on this task. Output quality is unvalidated.",
+                  file=sys.stderr)
     if args.mode == "search" and not args.target:
         ap.error("--target is required when --mode is 'search'")
     if args.samples > 1 and args.temperature <= 0.0:
@@ -178,6 +189,7 @@ def main():
         print("CPU inference works but is slow (10-20 min/image is normal).",
               file=sys.stderr)
 
+    # Probes are task-directed, so they use the search adapter.
     adapter = "combined_adapter" if args.mode == "freeview" else "visual_search_adapter"
     model, processor = load_model(args.repo, adapter, device, args.dtype)
 

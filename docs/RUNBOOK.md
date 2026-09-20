@@ -147,6 +147,9 @@ Plus `/qr` on the projector while people join.
    layers, it never deletes. The responses are still there and come back when
    you switch the layer on again.
 
+   Turn on **Show the prompt** here so the audience sees what the model was
+   asked, not just the dots it produced.
+
 5. **Turn the heatmap back on** to show both together.
 
 6. **Turn on Agreement metrics.** The panel appears under the image. Nothing to
@@ -157,6 +160,53 @@ Plus `/qr` on the projector while people join.
    starts empty. The previous round is kept.
 
 ---
+
+## 4b. Task probes
+
+`/control` offers a **Task** dropdown in two groups.
+
+**Trained — validated.** *Free viewing* and *Cars*. These use the exact
+templates the adapter was fine-tuned on. `car` is one of the 18 COCO-Search18
+targets, so it is genuinely on-distribution.
+
+**Experimental — off-distribution.** *What shouldn't be here*, *People*,
+*Roads*, *Count buildings*, *Find living things*, *Danger*, *Music*, *Robots*.
+The adapter never saw these tasks. The model still returns coordinates — it
+always does — but the quality is unvalidated, and there is no error to tell you
+when it is wrong.
+
+Each probe keeps the trained template's structure byte-for-byte and substitutes
+only the task clause. A bare instruction like "danger" would not produce
+coordinates at all; the model has to be told the output format.
+
+**Use *Cars* as your control.** It is the one experimental-looking option that
+is actually trained, so comparing it against *Danger* or *Robots* on the same
+image shows the audience the difference between a validated prediction and a
+plausible-looking guess. *Music* and *Robots* are useful negative controls on a
+street scene — nothing there matches, so watch what the model does with an
+impossible task.
+
+Generate probe runs ahead of time:
+
+```bash
+python tools/precompute.py --repo ../DeepGaze3.5-VL --all-probes \
+    --num-fixations 5 --samples 10 --temperature 0.7
+python tools/precompute.py --list-probes      # see the catalogue
+```
+
+## 4c. Showing the prompt and the raw data
+
+Two more toggles in `/control`, both for teaching:
+
+**Show the prompt** puts the full text the model was given under the image,
+with a green *Trained template* or amber *Experimental* badge and a one-line
+note. It shows the prompt the displayed run actually used, which can differ
+from the current selection if you changed it after the run was made.
+
+**Raw data (JSON)** opens a full-screen overlay with four tabs — Model run,
+Human taps, Agreement, Display state — showing exactly what the display is
+drawn from. Useful for making the point that the picture is computed, not
+illustrated. It refreshes while open, so taps arriving live appear in it.
 
 ## 5. Reading the analysis panel
 

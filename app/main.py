@@ -15,6 +15,10 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+import sys as _sys
+_sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "tools"))
+import gaze_prompts  # noqa: E402  (tools/ is this repo's own code)
+
 from . import analysis, config, db, urls
 
 
@@ -92,7 +96,8 @@ def require_token(
 class LAYERS:
     """Layer visibility. 'Clear' hides a layer; it never deletes data."""
 
-    KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0"}
+    KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
+            "prompt": "0", "json": "0"}
 
     @classmethod
     def current(cls) -> dict:
@@ -258,11 +263,33 @@ def api_state():
 
 
 def model_config() -> dict:
+    mode = db.get_state("model_mode", "freeview")
+    target = db.get_state("model_target") or None
+    probe = gaze_prompts.probe_for(mode, target)
+    n = int(db.get_state("model_n_fixations", "5"))
     return {
-        "mode": db.get_state("model_mode", "freeview"),
-        "target": db.get_state("model_target") or None,
-        "n_fixations": int(db.get_state("model_n_fixations", "5")),
+        "mode": mode,
+        "target": target,
+        "n_fixations": n,
+        "probe": probe,
+        # The prompt the model would be given for this configuration. Shown on
+        # the display so the audience sees what was actually asked, not just
+        # the resulting dots.
+        "prompt_text": _safe_prompt(mode, n, target),
     }
+
+
+def _safe_prompt(mode: str, n: int, target):
+    try:
+        return gaze_prompts.build_prompt(mode, n, target)
+    except ValueError:
+        return None
+
+
+@app.get("/api/probes")
+def api_probes():
+    """The probe catalogue, for the control page's dropdown."""
+    return {"probes": gaze_prompts.PROBES}
 
 
 @app.get("/api/model")
@@ -323,6 +350,22 @@ def api_analysis():
     if run:
         result["model_source"] = run.get("source")
     return result
+
+
+@app.get("/api/raw")
+def api_raw():
+    """Everything the current screen is built from, as one JSON document.
+
+    For showing an audience that the picture is computed from data, not drawn.
+    Public, like every other read endpoint, and carries no token.
+    """
+    return {
+        "note": "This is exactly what the display is rendering, nothing hidden.",
+        "state": api_state(),
+        "model": api_model(),
+        "markers": api_markers(),
+        "analysis": api_analysis(),
+    }
 
 
 @app.get("/api/markers")
@@ -446,12 +489,23 @@ def api_set_layers(payload: dict, _: str = Depends(require_token)):
 
 @app.post("/api/control/model-config")
 def api_set_model_config(payload: dict, _: str = Depends(require_token)):
-    if "mode" in payload:
-        if payload["mode"] not in ("freeview", "search"):
-            raise HTTPException(status_code=400, detail="mode must be freeview or search")
-        db.set_state("model_mode", payload["mode"])
-    if "target" in payload:
-        db.set_state("model_target", payload["target"] or "")
+    # A probe id sets mode and target together, which is what the UI uses.
+    if "probe" in payload:
+        probe = gaze_prompts.PROBES_BY_ID.get(payload["probe"])
+        if not probe:
+            raise HTTPException(status_code=400,
+                                detail=f"unknown probe: {payload['probe']!r}")
+        db.set_state("model_mode", probe["mode"])
+        db.set_state("model_target", probe["target"] or "")
+    else:
+        if "mode" in payload:
+            if payload["mode"] not in ("freeview", "search", "probe"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="mode must be freeview, search or probe")
+            db.set_state("model_mode", payload["mode"])
+        if "target" in payload:
+            db.set_state("model_target", payload["target"] or "")
     if "n_fixations" in payload:
         db.set_state("model_n_fixations", int(payload["n_fixations"]))
     return {"config": model_config()}
@@ -489,8 +543,8 @@ class PushedRun(BaseModel):
     @field_validator("mode")
     @classmethod
     def known_mode(cls, v):
-        if v not in ("freeview", "search"):
-            raise ValueError("mode must be freeview or search")
+        if v not in ("freeview", "search", "probe"):
+            raise ValueError("mode must be freeview, search or probe")
         return v
 
 
