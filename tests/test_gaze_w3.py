@@ -154,3 +154,53 @@ def test_view_releases_the_camera():
     src = (STATIC / "view.html").read_text()
     assert "pagehide" in src and "visibilitychange" in src
     assert "tracker.destroy()" in src
+
+
+# --- merged flow (eye tracking was never reached via /view) ----------------
+
+def test_calibration_runs_the_viewing_stage_on_the_same_page():
+    """Navigating to /view meant a second tracker, a second model load and a
+    second camera request. When any of that failed the only way out was the
+    tap screen, which is why eye tracking was never actually reached."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "async function runViewingStage" in src
+    assert "location.href = '/view'" not in src
+    assert "'Show me the picture', runViewingStage" in src
+
+
+def test_report_does_not_stop_the_tracker_on_success():
+    """The viewing stage runs next and needs the camera still live. Stopping
+    it here produced a recording of zero samples."""
+    src = (STATIC / "calibrate.html").read_text()
+    body = src[src.index("async function report(result)"):src.index("const badge =")]
+    assert "tracker.stop()" not in body
+
+
+def test_every_exit_path_releases_the_camera():
+    """Since the tracker is deliberately left running between stages, each
+    way out has to close it explicitly."""
+    src = (STATIC / "calibrate.html").read_text()
+    assert "function stopAndLeave" in src
+    assert "tracker.destroy()" in src
+    assert src.count("stopAndLeave") >= 4
+
+
+def test_calibration_is_fitted_once_not_per_point():
+    """handleClick() adapts on every point over every point retained, so nine
+    points cost 45 point-passes and nine undisposed Adam optimisers. That is
+    what made calibration choppy, and worse on a retry."""
+    cal = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "collectCalibrationSample" in cal
+    assert "applyCalibration" in cal
+    assert "PHASE.FITTING" in cal
+
+    tr = (STATIC / "gaze" / "tracker.js").read_text()
+    collect = tr[tr.index("collectCalibrationSample(x, y) {"):tr.index("async applyCalibration")]
+    assert "adapt(" not in collect, "collection must not adapt"
+
+
+def test_collected_eye_patches_are_copied():
+    """latestGazeResult is replaced every frame; holding the reference until
+    the end of calibration would fit on whatever the last frame contained."""
+    tr = (STATIC / "gaze" / "tracker.js").read_text()
+    assert "new ImageData(new Uint8ClampedArray(src.data)" in tr

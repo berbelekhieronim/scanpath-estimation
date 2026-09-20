@@ -216,10 +216,55 @@ export class WebEyeTrackBackend extends GazeTrackerBase {
     };
   }
 
+  /* Collect one calibration sample WITHOUT adapting yet.
+   *
+   * handleClick() runs a full adapt() on every point, over every point
+   * retained so far — so nine points cost 1+2+...+9 = 45 point-passes,
+   * forty-five transient tensor sets, and nine Adam optimisers that upstream
+   * never disposes. That is what makes calibration choppy, and worse on a
+   * retry.
+   *
+   * Collecting the features and adapting once at the end costs 9
+   * point-passes and one optimiser: roughly five times less work.
+   */
+  collectCalibrationSample(x, y) {
+    const r = this.wet && this.wet.latestGazeResult;
+    if (!r || !r.eyePatch || !r.headVector || !r.faceOrigin3D) {
+      return { accepted: false, reason: 'no face detected right now' };
+    }
+    const nx = x - 0.5, ny = y - 0.5;
+
+    // Copy the patch: the tracker replaces latestGazeResult every frame and
+    // we are holding these until the end of calibration.
+    const src = r.eyePatch;
+    const patch = new ImageData(new Uint8ClampedArray(src.data),
+                                src.width, src.height);
+
+    this._pending = this._pending || { patches: [], heads: [], origins: [], pogs: [] };
+    this._pending.patches.push(patch);
+    this._pending.heads.push(r.headVector.slice());
+    this._pending.origins.push(r.faceOrigin3D.slice());
+    this._pending.pogs.push([nx, ny]);
+    return { accepted: true, points: this._pending.patches.length };
+  }
+
+  /** Fit the collected samples in a single adaptation step. */
+  async applyCalibration() {
+    const p = this._pending;
+    if (!p || !p.patches.length) return { fitted: 0 };
+    await this.wet.adapt(p.patches, p.heads, p.origins, p.pogs);
+    const n = p.patches.length;
+    this._pending = null;
+    return { fitted: n };
+  }
+
+  discardPendingCalibration() { this._pending = null; }
+
   /* Upstream's handleClick() silently drops a point if it lands within
    * 1000 ms OR within 0.05 units of the previous one. Both are easy to trip
    * with an impatient participant, and a dropped point is invisible — so the
-   * caller is told whether the point was actually taken. */
+   * caller is told whether the point was actually taken. Kept for the
+   * incremental path; the batched path above is what calibration uses. */
   async calibratePoint(x, y) {
     if (!this.wet || !this.wet.latestGazeResult) {
       return { accepted: false, reason: 'no face detected right now' };
@@ -393,6 +438,12 @@ export class MockBackend extends GazeTrackerBase {
     return { accepted: true, points: this._calibrated };
   }
 
+  collectCalibrationSample() {
+    this._calibrated += 1;
+    return { accepted: true, points: this._calibrated };
+  }
+  async applyCalibration() { return { fitted: this._calibrated }; }
+  discardPendingCalibration() {}
   async restart() { this._calibrated = 0; return this.start(); }
   resetCalibration() { this._calibrated = 0; }
   destroy() { this.stop(); }

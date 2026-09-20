@@ -62,6 +62,19 @@
      off-screen or zero-opacity video, and upstream's frame loop exits for
      good when the element pauses — which looks exactly like a hang. Keeping
      it on screen also lets the participant see their own framing. */
+  /* Viewing stage, on the same page as calibration. */
+  .stage-view { position: absolute; inset: 0; display: grid; place-items: center;
+                background: #000; z-index: 2; }
+  .stage-view.hidden { display: none; }
+  .vframe { position: relative; max-width: 100%; max-height: 100%; overflow: hidden; }
+  .vframe img { display: block; width: 100%; height: 100%; object-fit: fill; }
+  .vring { position: absolute; top: calc(10px + env(safe-area-inset-top));
+           left: 50%; transform: translateX(-50%); z-index: 3; }
+  .vring circle { fill: none; stroke-width: 3; }
+  .vring .bg { stroke: rgba(255,255,255,.22); }
+  .vring .fg { stroke: #fff; stroke-linecap: round;
+               transform: rotate(-90deg); transform-origin: 50% 50%; }
+
   video { position: absolute; top: calc(8px + env(safe-area-inset-top)); right: 8px;
           width: 74px; height: 56px; object-fit: cover; border-radius: 7px;
           border: 1px solid var(--border); transform: scaleX(-1);
@@ -98,6 +111,16 @@
   </div>
 
   <div class="face-chip" id="face-chip">starting…</div>
+
+  <div class="stage-view hidden" id="stage-view">
+    <div class="vframe" id="vframe">
+      <img id="vphoto" alt="">
+      <svg class="vring" id="vring" width="34" height="34" viewBox="0 0 34 34">
+        <circle class="bg" cx="17" cy="17" r="14"></circle>
+        <circle class="fg" id="vring-fg" cx="17" cy="17" r="14"></circle>
+      </svg>
+    </div>
+  </div>
   <div class="target hidden" id="target"><div class="pulse"></div></div>
   <div class="progress" id="progress"></div>
 
@@ -267,7 +290,7 @@ async function begin() {
   tracker.onStatus = (status, err) => {
     if (status === STATUS.ERROR) {
       overlay('The camera could not start', `<p>${err || ''}</p>`,
-              'Skip this part', () => { location.href = '/?nocamera=1'; });
+              'Skip this part', stopAndLeave);
     }
   };
 
@@ -343,7 +366,10 @@ async function begin() {
 }
 
 async function report(result) {
-  tracker.stop();
+  // Deliberately NOT stopping the tracker here. When calibration succeeds the
+  // viewing stage runs next on this same page and needs the camera still
+  // live; stopping it here is what produced a recording of zero samples.
+  // Every terminal path below stops it instead.
   const pct = result.meanError == null ? null : Math.round(result.meanError * 100);
 
   let sessionResponse = null;
@@ -399,8 +425,8 @@ async function report(result) {
       `${badge}<p>The camera feed stopped sending frames. On a phone this
        usually means the browser paused the video — switching apps or locking
        the screen will do it.</p>${diagLine}`,
-      attempts < 2 ? 'Try again' : 'Continue without',
-      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+      attempts < 2 ? 'Try again' : stopAndLeave,
+      attempts < 2 ? begin : stopAndLeave);
     return;
   }
 
@@ -408,18 +434,23 @@ async function report(result) {
     overlay('We could not see your face',
       `${badge}<p>The camera never found a face. The usual reasons are not
        enough light on your face, or the phone not pointing at you.</p>${diagLine}`,
-      attempts < 2 ? 'Try again' : 'Continue without', 
-      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+      attempts < 2 ? 'Try again' : 'Continue without',
+      attempts < 2 ? begin : stopAndLeave);
     return;
   }
 
   if (result.ok) {
-    overlay('Calibrated',
-      `${badge}<p>Typical error about <strong>${pct}%</strong> of the screen
-       across the checks.</p>${diagLine}
-       <p style="font-size:.8125rem">That is the expected range for a phone
-       camera. It is enough to tell broad regions apart, not fine detail.</p>`,
-      'Continue', () => { location.href = '/view'; });
+    // Straight into the viewing stage on THIS page. Navigating to /view used
+    // to mean a second model load and a second camera request, and if either
+    // failed the only way out was the tap screen — which is why eye tracking
+    // was never actually reached.
+    overlay('Calibrated — now just look',
+      `${badge}<p>Typical error about <strong>${pct}%</strong> of the screen.</p>
+       <p>Next: the picture appears for five seconds.
+          <strong>Don't tap — just look at it naturally.</strong></p>
+       <p style="font-size:.8125rem">Keep the phone exactly where it is.</p>
+       ${diagLine}`,
+      'Show me the picture', runViewingStage);
   } else {
     overlay('Tracking is not accurate enough',
       `${badge}<p>Typical error about <strong>${pct ?? '—'}%</strong> of the
@@ -428,8 +459,126 @@ async function report(result) {
        holding it helps most. More light on your face, and keeping a constant
        distance, also help.</p>${diagLine}`,
       attempts < 2 ? 'Try again' : 'Continue without',
-      attempts < 2 ? begin : () => { location.href = '/?nocamera=1'; });
+      attempts < 2 ? begin : stopAndLeave);
   }
+}
+
+/* Release the camera before leaving. The tracker is deliberately left running
+   between calibration and viewing, so every exit has to close it explicitly. */
+function stopAndLeave() {
+  try { tracker && tracker.destroy(); } catch {}
+  location.href = '/?nocamera=1';
+}
+
+
+/* ---------------------------------------------------------------- *
+ * Viewing stage — same page, same tracker, same camera session.
+ *
+ * This used to live at /view, which meant navigating away, constructing a
+ * second tracker, loading the model again and asking for the camera a second
+ * time. When any of that failed the only way out was the tap screen, which is
+ * why eye tracking was never actually reached.
+ * ---------------------------------------------------------------- */
+
+const VIEW_MS = Number(params.get('ms')) || 5000;
+
+function toImageCoords(s) {
+  const r = $('vframe').getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const x = (s.x * window.innerWidth - r.left) / r.width;
+  const y = (s.y * window.innerHeight - r.top) / r.height;
+  const on = x >= 0 && x <= 1 && y >= 0 && y <= 1;
+  return { t: Math.round(s.t), x: on ? +x.toFixed(4) : null,
+           y: on ? +y.toFixed(4) : null, on_image: on };
+}
+
+async function runViewingStage() {
+  $('overlay').classList.add('hidden');
+  $('banner').style.display = 'none';
+  $('progress').style.display = 'none';
+  clearInterval(window._faceTimer);
+  crumb('viewing');
+
+  let state;
+  try { state = await fetch('/api/state').then((r) => r.json()); } catch { state = null; }
+  if (!state || !state.image) {
+    overlay('Nothing to look at yet',
+      '<p>The presenter has not chosen an image.</p>', 'Done',
+      () => { location.href = '/?viewed=1'; });
+    return;
+  }
+
+  $('vframe').style.aspectRatio = `${state.image.width} / ${state.image.height}`;
+  $('vphoto').src = '/img/' + encodeURIComponent(state.image.filename);
+  await new Promise((res) => {
+    if ($('vphoto').complete) return res();
+    $('vphoto').onload = res; $('vphoto').onerror = res;
+  });
+  $('stage-view').classList.remove('hidden');
+
+  const samples = [];
+  let blinks = 0, offImage = 0;
+  tracker.onSample = (s) => {
+    if (!s.ok || s.x == null) return;
+    if (s.state === 'closed') { blinks++; return; }
+    const m = toImageCoords(s);
+    if (!m) return;
+    if (!m.on_image) offImage++;
+    samples.push(m);
+  };
+
+  const C = 2 * Math.PI * 14;
+  $('vring-fg').style.strokeDasharray = `${C}`;
+  const t0 = performance.now();
+  await new Promise((resolve) => {
+    const tick = () => {
+      const pr = Math.min(1, (performance.now() - t0) / VIEW_MS);
+      $('vring-fg').style.strokeDashoffset = `${C * pr}`;
+      if (pr >= 1) return resolve();
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+  const durationMs = performance.now() - t0;
+
+  tracker.stop();
+  $('stage-view').classList.add('hidden');
+  await uploadSamples(samples, durationMs, blinks, offImage);
+}
+
+async function uploadSamples(samples, durationMs, blinks, offImage) {
+  const id = Number(localStorage.getItem('scanpath_gaze_session_id'));
+  const onImage = samples.filter((s) => s.on_image).length;
+  const rate = durationMs ? (samples.length / (durationMs / 1000)).toFixed(1) : '—';
+  const detail = `<p style="font-size:.75rem">${samples.length} samples at
+     ${rate}/s${blinks ? `, ${blinks} blinks` : ''}${
+     offImage ? `, ${offImage} off the picture` : ''}.</p>`;
+
+  if (!id) {
+    overlay('Recorded, but not saved',
+      `<p>This device has no calibration on record.</p>${detail}`,
+      'Done', () => { location.href = '/?viewed=1'; });
+    return;
+  }
+  try {
+    const res = await fetch('/api/gaze/samples', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: id, samples,
+        duration_ms: Math.round(durationMs), blinks, off_image: offImage }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+  } catch {
+    overlay('Could not send your data',
+      `<p>Your looking was recorded but could not be uploaded.</p>${detail}`,
+      'Try again', () => uploadSamples(samples, durationMs, blinks, offImage));
+    return;
+  }
+  crumb('done'); clearCrumb();
+  overlay('Thank you',
+    `<div class="big">✓</div>
+     <p>Recorded where you actually looked — ${onImage} points on the picture.</p>
+     ${detail}<p>Look up at the screen.</p>`,
+    'Done', () => { location.href = '/?viewed=1'; });
 }
 
 $('ov-btn').onclick = begin;

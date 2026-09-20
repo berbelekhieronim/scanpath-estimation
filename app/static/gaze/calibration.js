@@ -36,6 +36,7 @@ export const PHASE = {
   IDLE: 'idle',
   WAITING_FOR_FACE: 'waiting_for_face',
   CALIBRATING: 'calibrating',
+  FITTING: 'fitting',
   VALIDATING: 'validating',
   DONE: 'done',
   FAILED: 'failed',
@@ -193,15 +194,20 @@ export class Calibration {
         this.onPoint(i, points.length, points[i], 'calibration');
         await this._awaitTap();
         await sleep(this.settleMs);
-        const res = await this.tracker.calibratePoint(points[i][0], points[i][1]);
+        // Collect only — the fit happens once, after every point (see
+        // collectCalibrationSample). No 1000 ms debounce applies to
+        // collection, so the pace is set by the participant, not the library.
+        const res = await this.tracker.collectCalibrationSample(
+          points[i][0], points[i][1]);
         if (res && res.accepted) {
           this.accepted++;
         } else {
           // A silently dropped point would leave the model weaker than the
           // progress bar claims, so it is retried once rather than ignored.
           this.rejected.push({ point: points[i], reason: res && res.reason });
-          await sleep(1200);
-          const retry = await this.tracker.calibratePoint(points[i][0], points[i][1]);
+          await sleep(400);
+          const retry = await this.tracker.collectCalibrationSample(
+            points[i][0], points[i][1]);
           if (retry && retry.accepted) this.accepted++;
         }
         // Watch tensor count across calibration: a monotonic climb is the
@@ -216,6 +222,13 @@ export class Calibration {
         this.onProgress({ accepted: this.accepted, total: points.length,
                           rejected: this.rejected.length, memory: mem });
       }
+
+      // One adaptation over every point collected.
+      this._setPhase(PHASE.FITTING);
+      const t0 = performance.now();
+      const fit = await this.tracker.applyCalibration();
+      this.fitMs = Math.round(performance.now() - t0);
+      this.fitted = (fit && fit.fitted) || 0;
 
       // --- validation: measured, never trained on ---
       this._setPhase(PHASE.VALIDATING);
@@ -272,6 +285,8 @@ export class Calibration {
       meanError,
       worstError,
       pointsAccepted: this.accepted,
+      fitted: this.fitted || 0,
+      fitMs: this.fitMs || null,
       pointsTotal: this.points.length,
       pointsRejected: this.rejected,
       validation: this.validation,
