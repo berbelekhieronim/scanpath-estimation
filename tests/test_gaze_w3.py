@@ -142,11 +142,13 @@ def test_view_gives_the_eye_nothing_to_look_at_but_the_picture():
     assert "Don't tap anything" in src
 
 
-def test_calibration_hands_off_to_the_viewing_stage(client):
-    """Previously it dumped the participant on the tap page, which knew
-    nothing about the calibration that had just happened."""
+def test_calibration_leads_into_viewing_without_leaving_the_page(client):
+    """Superseded: calibration used to navigate to /view, which meant a
+    second tracker and a second camera request. Both stages now run on one
+    page, so the assertion is that it does NOT navigate."""
     src = (STATIC / "calibrate.html").read_text()
-    assert "location.href = '/view'" in src
+    assert "location.href = '/view'" not in src
+    assert "runViewingStage" in src
     assert "scanpath_gaze_session_id" in src
 
 

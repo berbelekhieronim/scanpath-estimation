@@ -102,6 +102,7 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
     init_gaze()
     init_gaze_samples()
+    init_assignments()
 
 
 # --------------------------------------------------------------------------
@@ -555,3 +556,108 @@ def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
         "sessions": counts["sessions"] or 0,
         "excluded": counts["excluded"] or 0,
     }
+
+
+# --------------------------------------------------------------------------
+# condition assignment (between-subjects design)
+# --------------------------------------------------------------------------
+
+ASSIGNMENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS assignments (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id       INTEGER NOT NULL REFERENCES rounds(id),
+    participant_id INTEGER NOT NULL REFERENCES participants(id),
+    condition      TEXT    NOT NULL,          -- 'tap' | 'gaze'
+    assigned_at    TEXT    NOT NULL,
+    completed      INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assignment_unique
+    ON assignments(round_id, participant_id);
+"""
+
+CONDITIONS = ("tap", "gaze")
+
+
+def init_assignments() -> None:
+    with connect() as conn:
+        conn.executescript(ASSIGNMENT_SCHEMA)
+
+
+def assignment_counts(round_id: int) -> dict:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT condition, COUNT(*) AS assigned, "
+            "SUM(completed) AS completed FROM assignments "
+            "WHERE round_id = ? GROUP BY condition", (round_id,)
+        ).fetchall()
+    out = {c: {"assigned": 0, "completed": 0} for c in CONDITIONS}
+    for r in rows:
+        if r["condition"] in out:
+            out[r["condition"]] = {"assigned": r["assigned"],
+                                   "completed": r["completed"] or 0}
+    return out
+
+
+def assign_condition(round_id: int, participant_id: int, mode: str) -> dict:
+    """Assign, or return an existing assignment for this round.
+
+    In mixed mode the choice balances on **completed** responses first, not
+    merely assigned ones. Eye tracking has a real failure rate — people whose
+    calibration fails never complete — so balancing on assignment alone would
+    quietly leave the gaze group the smaller of the two, which is exactly the
+    group that can least afford it.
+    """
+    import random
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM assignments WHERE round_id = ? AND participant_id = ?",
+            (round_id, participant_id)).fetchone()
+        if row:
+            return {"condition": row["condition"], "new": False,
+                    "completed": bool(row["completed"])}
+
+    if mode in CONDITIONS:
+        condition = mode
+    else:
+        counts = assignment_counts(round_id)
+        tap, gaze = counts["tap"], counts["gaze"]
+        if tap["completed"] != gaze["completed"]:
+            condition = "tap" if tap["completed"] < gaze["completed"] else "gaze"
+        elif tap["assigned"] != gaze["assigned"]:
+            condition = "tap" if tap["assigned"] < gaze["assigned"] else "gaze"
+        else:
+            condition = random.choice(CONDITIONS)
+
+    with connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO assignments "
+            "(round_id, participant_id, condition, assigned_at) VALUES (?, ?, ?, ?)",
+            (round_id, participant_id, condition, utcnow()))
+        got = conn.execute(
+            "SELECT condition FROM assignments WHERE round_id = ? AND participant_id = ?",
+            (round_id, participant_id)).fetchone()
+    return {"condition": got["condition"], "new": True, "completed": False}
+
+
+def mark_completed(round_id: int, participant_id: int) -> None:
+    with connect() as conn:
+        conn.execute(
+            "UPDATE assignments SET completed = 1 "
+            "WHERE round_id = ? AND participant_id = ?", (round_id, participant_id))
+
+
+def get_condition(round_id: int, participant_id: int) -> Optional[str]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT condition FROM assignments WHERE round_id = ? AND participant_id = ?",
+            (round_id, participant_id)).fetchone()
+    return row["condition"] if row else None
+
+
+def participants_in_condition(round_id: int, condition: str) -> set:
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT participant_id FROM assignments "
+            "WHERE round_id = ? AND condition = ?", (round_id, condition))
+        return {r["participant_id"] for r in rows}

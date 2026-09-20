@@ -113,9 +113,13 @@ function showThanks(count) {
   // Offer the measurement stage, unless this device already declined the
   // camera. Without this the journey dead-ends here and the eye-tracking
   // half of the demo is unreachable from the participant's own phone.
+  // In a between-subjects design the tap group must NOT also be measured,
+  // so the offer only appears when the presenter is running tap-only mode
+  // and is deliberately collecting both from the same people.
   let consent = null;
   try { consent = localStorage.getItem('scanpath_camera_consent'); } catch {}
-  const offer = consent === 'declined' ? '' : `
+  const betweenSubjects = window.__captureMode && window.__captureMode !== 'tap';
+  const offer = (consent === 'declined' || betweenSubjects) ? '' : `
       <p style="margin-top:22px">Now the other half: we can <strong>measure</strong>
          where your eyes actually go, and compare it with what you just
          predicted.</p>
@@ -206,8 +210,35 @@ async function submit() {
   }
 }
 
+/* Which condition is this participant in?
+ *
+ * Between-subjects: a participant either predicts by tapping or is measured
+ * by camera, never both. Doing both would mean the tapping primes the
+ * looking, and the measurement would no longer be of naive viewing.
+ */
+async function routeByCondition() {
+  let a;
+  try {
+    a = await fetch('/api/assign', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ participant_uuid: participantUuid() }),
+    }).then((r) => (r.ok ? r.json() : null));
+  } catch { return false; }
+  if (!a || a.completed) return false;
+
+  if (a.condition === 'gaze') {
+    let consent = null;
+    try { consent = localStorage.getItem('scanpath_camera_consent'); } catch {}
+    if (consent === 'declined') return false;   // fall back to tapping
+    location.href = consent === 'granted' ? '/calibrate' : '/consent';
+    return true;
+  }
+  return false;
+}
+
 async function init() {
   if (showReturnState()) return;
+  if (await routeByCondition()) return;
   let s;
   try {
     s = await fetch('/api/state').then((r) => r.json());
@@ -221,6 +252,7 @@ async function init() {
     return;
   }
   state = s;
+  window.__captureMode = s.capture_mode;
 
   const frame = $('frame');
   frame.style.aspectRatio = `${s.image.width} / ${s.image.height}`;

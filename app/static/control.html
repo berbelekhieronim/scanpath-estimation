@@ -91,6 +91,25 @@
     </div>
 
     <div class="card section">
+      <h2>Capture mode</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label style="min-width:110px">Participants</label>
+        <select id="capture-mode" style="max-width:300px">
+          <option value="tap">Tap only — predict where they'd look</option>
+          <option value="gaze">Eye tracking only — measure it</option>
+          <option value="mixed">Mixed — split between the two</option>
+        </select>
+      </div>
+      <div class="sub" id="condition-counts" style="margin-bottom:10px"></div>
+      <div class="sub">
+        Between-subjects: a participant does one or the other, never both.
+        Tapping first would prime the looking and the measurement would no
+        longer be of naive viewing. Mixed balances on <em>completed</em>
+        responses, so calibration failures do not quietly shrink the gaze group.
+      </div>
+    </div>
+
+    <div class="card section">
       <h2>Model</h2>
       <div id="model-status" class="sub" style="margin-bottom:12px">…</div>
       <div class="row" style="margin-bottom:8px">
@@ -229,6 +248,15 @@ async function refresh() {
       $('probe').value = model.config.probe.id;
     }
     renderProbeNote(model.config.probe);
+
+    const cond = await fetch('/api/conditions').then((r) => r.json());
+    if (document.activeElement !== $('capture-mode')) $('capture-mode').value = cond.mode;
+    const c = cond.counts;
+    $('condition-counts').innerHTML = cond.mode === 'tap'
+      ? 'Everyone taps.'
+      : `<strong>${c.tap.completed}</strong> tapped ·
+         <strong>${c.gaze.completed}</strong> eye-tracked
+         <span style="opacity:.7">(${c.tap.assigned} / ${c.gaze.assigned} assigned)</span>`;
     renderModelStatus(model);
   } catch {}
 }
@@ -292,6 +320,15 @@ function renderProbeNote(probe) {
 }
 
 $('probe').addEventListener('change', (e) => setModelConfig({ probe: e.target.value }));
+
+$('capture-mode').addEventListener('change', async (e) => {
+  try {
+    await api('/api/control/capture-mode', {
+      method: 'POST', body: JSON.stringify({ mode: e.target.value }) });
+    notice(`Capture mode: ${e.target.value}.`, 'ok');
+    await refresh();
+  } catch (err) { notice(err.message, 'err'); }
+});
 
 $('rescan-model').addEventListener('click', async () => {
   try {

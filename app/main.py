@@ -280,6 +280,7 @@ def api_state():
         "tap_count": int(db.get_state("tap_count", config.DEFAULT_TAP_COUNT)),
         "responses": counts,
         "layers": LAYERS.current(),
+        "capture_mode": db.get_state("capture_mode", "tap"),
     }
 
 
@@ -305,6 +306,49 @@ def _safe_prompt(mode: str, n: int, target):
         return gaze_prompts.build_prompt(mode, n, target)
     except ValueError:
         return None
+
+
+class Assignment(BaseModel):
+    participant_uuid: str = Field(min_length=8, max_length=64)
+
+
+@app.post("/api/assign")
+def api_assign(payload: Assignment, request: Request):
+    """Tell a participant which condition they are in.
+
+    Between-subjects by design: asking someone to predict where they would
+    look and then measuring where they do contaminates the measurement, so a
+    participant does one or the other, never both.
+    """
+    round_ = db.get_active_round()
+    if not round_:
+        raise HTTPException(status_code=409, detail="No round is open")
+    participant_id = db.upsert_participant(
+        payload.participant_uuid, request.headers.get("user-agent"))
+    mode = db.get_state("capture_mode", "tap")
+    result = db.assign_condition(round_["id"], participant_id, mode)
+    return {**result, "mode": mode,
+            "counts": db.assignment_counts(round_["id"])}
+
+
+@app.get("/api/conditions")
+def api_conditions():
+    round_ = db.get_active_round()
+    if not round_:
+        return {"mode": db.get_state("capture_mode", "tap"),
+                "counts": {c: {"assigned": 0, "completed": 0} for c in db.CONDITIONS}}
+    return {"mode": db.get_state("capture_mode", "tap"),
+            "counts": db.assignment_counts(round_["id"])}
+
+
+@app.post("/api/control/capture-mode")
+def api_set_capture_mode(payload: dict, _: str = Depends(require_token)):
+    mode = payload.get("mode")
+    if mode not in ("tap", "gaze", "mixed"):
+        raise HTTPException(status_code=400,
+                            detail="mode must be tap, gaze or mixed")
+    db.set_state("capture_mode", mode)
+    return {"mode": mode}
 
 
 @app.get("/api/probes")
@@ -389,6 +433,50 @@ def api_raw():
     }
 
 
+def _condition_paths(round_id: int) -> dict:
+    """Tap paths and gaze paths, each restricted to their assigned group."""
+    tap_ids = db.participants_in_condition(round_id, "tap")
+    gaze_ids = db.participants_in_condition(round_id, "gaze")
+
+    by_participant: dict = {}
+    for r in db.get_round_markers(round_id):
+        by_participant.setdefault(r["participant_id"], []).append([r["x"], r["y"]])
+
+    # With no assignments at all (tap-only mode from before the split),
+    # every tapper counts as the tap group rather than vanishing.
+    tap_paths = [v for k, v in by_participant.items()
+                 if not tap_ids and not gaze_ids or k in tap_ids]
+
+    gaze = db.round_gaze_points(round_id)
+    return {"tap": tap_paths, "gaze": gaze["paths"],
+            "gaze_excluded": gaze["excluded"]}
+
+
+@app.get("/api/compare")
+def api_compare(grid: int = 3):
+    """Between-subjects comparison: tap group vs gaze group vs model."""
+    round_ = db.get_active_round()
+    if not round_:
+        return {"ok": False, "reason": "no round open"}
+
+    paths = _condition_paths(round_["id"])
+    cfg = model_config()
+    run = (db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"],
+                            cfg["n_fixations"])
+           or db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"]))
+    model_paths = (run.get("samples_norm") or [run.get("scanpath_norm")]) if run else []
+
+    result = analysis.compare_sources({
+        "tap": paths["tap"],
+        "gaze": paths["gaze"],
+        "model": [p for p in model_paths if p],
+    }, grid=max(2, min(5, grid)))
+    result["conditions"] = db.assignment_counts(round_["id"])
+    result["gaze_excluded"] = paths["gaze_excluded"]
+    result["model_source"] = run.get("source") if run else None
+    return result
+
+
 @app.get("/api/markers")
 def api_markers():
     """Every response for the open round, grouped into per-participant paths.
@@ -451,6 +539,7 @@ def api_submit_markers(sub: Submission, request: Request):
         sub.participant_uuid, request.headers.get("user-agent")
     )
     n = db.save_markers(active["id"], participant_id, sub.points)
+    db.mark_completed(active["id"], participant_id)
     return {"saved": n, "round_id": active["id"], "responses": db.count_responses(active["id"])}
 
 
@@ -533,6 +622,8 @@ def api_gaze_samples(payload: GazeSamples):
 
     n = db.save_gaze_samples(payload.session_id, payload.samples)
     round_ = db.get_active_round()
+    if round_ and not sess["excluded"]:
+        db.mark_completed(round_["id"], sess["participant_id"])
     return {
         "saved": n,
         "session_id": payload.session_id,
@@ -693,6 +784,73 @@ def api_push_model_run(run: PushedRun, _: str = Depends(require_token)):
     run_id = db.upsert_model_run(image["id"], payload)
     return {"run_id": run_id, "image_id": image["id"],
             "stored_as": payload["source"]}
+
+
+@app.get("/api/export.csv")
+def api_export_csv(_: str = Depends(require_token)):
+    """Every observation as one row — the shape stats packages want.
+
+    Tap marks, gaze samples and model fixations all land in the same table
+    with a `source` column, so a between-subjects comparison needs no
+    reshaping before it can be run.
+    """
+    import csv
+    import io as _io
+    import json as _json
+
+    buf = _io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["round_id", "image", "participant", "condition", "source",
+                "seq", "t_ms", "x", "y", "calibration_grade",
+                "calibration_error", "on_image"])
+
+    with db.connect() as conn:
+        images = {i["id"]: i for i in
+                  (dict(r) for r in conn.execute("SELECT * FROM images"))}
+        rounds = {r["id"]: r for r in
+                  (dict(x) for x in conn.execute("SELECT * FROM rounds"))}
+        uuids = {r["id"]: r["uuid"] for r in
+                 conn.execute("SELECT id, uuid FROM participants")}
+        conds = {(r["round_id"], r["participant_id"]): r["condition"]
+                 for r in conn.execute("SELECT * FROM assignments")}
+
+        for m in conn.execute("SELECT * FROM markers ORDER BY round_id, participant_id, seq"):
+            rnd = rounds.get(m["round_id"], {})
+            w.writerow([m["round_id"], images.get(rnd.get("image_id"), {}).get("filename", ""),
+                        uuids.get(m["participant_id"], ""),
+                        conds.get((m["round_id"], m["participant_id"]), "tap"),
+                        "tap", m["seq"], "", f"{m['x']:.6f}", f"{m['y']:.6f}", "", "", 1])
+
+        for s in conn.execute(
+                "SELECT s.*, g.participant_id, g.round_id, g.grade, g.mean_error "
+                "FROM gaze_samples s JOIN gaze_sessions g ON g.id = s.session_id "
+                "ORDER BY s.session_id, s.t_ms"):
+            rnd = rounds.get(s["round_id"], {})
+            w.writerow([s["round_id"], images.get(rnd.get("image_id"), {}).get("filename", ""),
+                        uuids.get(s["participant_id"], ""),
+                        conds.get((s["round_id"], s["participant_id"]), "gaze"),
+                        "gaze", "", s["t_ms"],
+                        "" if s["x"] is None else f"{s['x']:.6f}",
+                        "" if s["y"] is None else f"{s['y']:.6f}",
+                        s["grade"] or "",
+                        "" if s["mean_error"] is None else f"{s['mean_error']:.4f}",
+                        s["on_image"]])
+
+        for r in conn.execute("SELECT * FROM model_runs"):
+            try:
+                payload = _json.loads(r["coords_json"])
+            except Exception:
+                continue
+            img = images.get(r["image_id"], {}).get("filename", "")
+            for obs_i, path in enumerate(payload.get("samples_norm")
+                                         or [payload.get("scanpath_norm") or []]):
+                for seq, (x, y) in enumerate(path):
+                    w.writerow(["", img, f"model_sample_{obs_i}", "model", "model",
+                                seq, "", f"{x:.6f}", f"{y:.6f}", "", "", 1])
+
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition":
+                             'attachment; filename="scanpath-long.csv"'})
 
 
 @app.get("/api/export")

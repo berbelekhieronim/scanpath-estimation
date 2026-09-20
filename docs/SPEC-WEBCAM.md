@@ -137,8 +137,28 @@ after the first real-room test — which is the only test that matters here.
 
 ## 5. Participant flow
 
-Three stages, all on the participant's own phone. Stage 1 is the existing
-capture view, unchanged.
+**Revised 2026-09-20 to a between-subjects design.** The original plan had
+each participant tap first and then be measured, so that prediction and
+measurement could be compared within a person. That is contaminated: having
+just deliberated about where they would look, a participant no longer views
+the image naively, and the measurement is of a primed viewer rather than a
+fresh one. The within-subject comparison is not worth a compromised
+measurement.
+
+So a participant does **one** of the two, never both:
+
+| Condition | What they do |
+|---|---|
+| **tap** | Predicts by tapping five places, as before |
+| **gaze** | Consents, calibrates, and is measured while free-viewing |
+
+The comparison becomes between-groups: tap group vs gaze group vs model.
+`/control` switches between tap-only, gaze-only and mixed. Mixed balances on
+**completed** responses rather than assignments, because eye tracking has a
+real failure rate and balancing on assignment alone would quietly leave the
+gaze group the smaller of the two — the group least able to afford it.
+
+Stage 1 below is the tap condition; stages 2 and 3 are the gaze condition.
 
 ### Stage 1 — Predict (existing)
 Tap five places in order. Unchanged, and deliberately first: doing it *before*

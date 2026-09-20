@@ -334,3 +334,92 @@ def analyse(human_paths: List[Path], model_paths: List[Path],
             "model": transition_matrix(model_paths, centres),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Between-subjects comparison
+# ---------------------------------------------------------------------------
+
+def coarse_grid(points: Points, n: int = 3) -> np.ndarray:
+    """Proportion of points in each cell of an n x n grid.
+
+    A fixed grid, not derived clusters. Measured gaze carries roughly 20% of
+    screen width in error, so cells finer than about a third of the image
+    would be reporting noise as structure.
+    """
+    counts = np.zeros(n * n, dtype=float)
+    for x, y in points:
+        cx = min(n - 1, max(0, int(x * n)))
+        cy = min(n - 1, max(0, int(y * n)))
+        counts[cy * n + cx] += 1
+    total = counts.sum()
+    return counts / total if total else counts
+
+
+def centre_bias_index(points: Points, n: int = 3) -> Optional[float]:
+    """Share of points in the central cell.
+
+    The measure most likely to separate the groups. Real fixations cluster
+    centrally for reasons unrelated to scene content; deliberate taps do not,
+    because nobody reports "I would look at the middle of the picture".
+    """
+    if not points:
+        return None
+    g = coarse_grid(points, n)
+    return float(g[(n // 2) * n + (n // 2)])
+
+
+def compare_sources(sources: dict, grid: int = 3, seed: int = 0) -> dict:
+    """Pairwise comparison of two or more sets of viewing data.
+
+    `sources` maps a label ("tap", "gaze", "model") to a list of paths. Every
+    pair present is compared on the same coarse grid, so the numbers are on a
+    common footing even though the sources differ wildly in precision.
+    """
+    from itertools import combinations
+
+    pooled, grids, present = {}, {}, []
+    for label, paths in sources.items():
+        pts = [p for path in (paths or []) for p in path]
+        if not pts:
+            continue
+        present.append(label)
+        pooled[label] = pts
+        grids[label] = coarse_grid(pts, grid)
+
+    if len(present) < 2:
+        return {"ok": False, "reason": "need at least two sources with data",
+                "available": present}
+
+    pairs = {}
+    for a, bl in combinations(present, 2):
+        pairs[f"{a}_vs_{bl}"] = {
+            "spearman": spearman(grids[a], grids[bl]),
+            "nss": nss(pooled[a], pooled[bl]),
+            "top_cell_agree": int(np.argmax(grids[a])) == int(np.argmax(grids[bl])),
+        }
+
+    return {
+        "ok": True,
+        "grid": grid,
+        "sources": {
+            label: {
+                "n_participants": len(sources[label]),
+                "n_points": len(pooled[label]),
+                "cells": grids[label].tolist(),
+                "top_cell": int(np.argmax(grids[label])),
+                "centre_bias": centre_bias_index(pooled[label], grid),
+            } for label in present
+        },
+        "pairs": pairs,
+        "baselines": {
+            "random": {
+                label: spearman(coarse_grid(random_points(len(pooled[label]), seed), grid),
+                                grids[label]) for label in present
+            },
+            "centre_bias": {
+                label: spearman(coarse_grid(centre_bias_points(len(pooled[label]), seed), grid),
+                                grids[label]) for label in present
+            },
+        },
+    }
