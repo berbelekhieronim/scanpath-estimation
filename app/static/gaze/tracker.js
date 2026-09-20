@@ -408,8 +408,10 @@ export class MockBackend extends GazeTrackerBase {
     this._onMove = (e) => {
       const p = e.touches ? e.touches[0] : e;
       this._pos = {
-        x: p.clientX / window.innerWidth,
-        y: p.clientY / window.innerHeight,
+        // Against the visible box, matching how the page is laid out and
+        // how samples are mapped back onto the picture.
+        x: p.clientX / (window.visualViewport?.width || window.innerWidth),
+        y: p.clientY / (window.visualViewport?.height || window.innerHeight),
       };
     };
   }

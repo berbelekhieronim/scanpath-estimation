@@ -7,8 +7,16 @@
 <title>Calibrating — where do you look?</title>
 <link rel="stylesheet" href="/static/app.css">
 <style>
-  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
-  .cal { position: fixed; inset: 0; touch-action: manipulation;
+  /* --app-h is measured from visualViewport (see gaze/viewport.js). On iOS
+     in landscape the toolbars stay put and 100vh / inset:0 describe a box
+     about a quarter taller than anything the participant can see — with
+     overflow hidden there is no scrolling to reach the rest. dvh is the
+     fallback for browsers without visualViewport. */
+  html, body { height: var(--app-h, 100dvh); overflow: hidden;
+               overscroll-behavior: none; }
+  .cal { position: fixed; top: 0; left: 0;
+         width: var(--app-w, 100vw); height: var(--app-h, 100dvh);
+         touch-action: manipulation;
          -webkit-user-select: none; user-select: none;
          -webkit-tap-highlight-color: transparent; }
 
@@ -28,7 +36,7 @@
   /* The target. Concentric rings give the eye something precise to land on —
      a plain disc lets gaze drift to its edge. */
   .target { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px;
-            border-radius: 50%; display: grid; place-items: center; z-index: 2;
+            border-radius: 50%; display: grid; place-items: center; z-index: 5;
             transition: left .28s cubic-bezier(.4,0,.2,1), top .28s cubic-bezier(.4,0,.2,1);
             cursor: pointer; }
   .target::before { content: ''; position: absolute; inset: 0; border-radius: 50%;
@@ -43,13 +51,46 @@
   @keyframes pulse { from { transform: scale(.85); opacity: .7 } to { transform: scale(1.25); opacity: 0 } }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; opacity: .3 } }
 
-  .overlay { position: absolute; inset: 0; z-index: 4; display: grid;
-             place-items: center; text-align: center; padding: 26px;
-             background: var(--bg); }
+  /* Rotating invalidates a calibration: it was fitted to one screen shape.
+     Rather than quietly recording nonsense, the run pauses until the device
+     is turned back. */
+  .rotate-guard { position: fixed; top: 0; left: 0;
+                  width: var(--app-w, 100vw); height: var(--app-h, 100dvh);
+                  z-index: 9; display: flex; text-align: center;
+                  padding: 24px; background: var(--bg); overflow-y: auto; }
+  .rotate-guard > div { margin: auto; }
+  .rotate-guard.hidden { display: none; }
+  .rotate-guard .icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .rotate-guard p { color: var(--muted); max-width: 32ch; margin: 0 auto; }
+
+  /* Centred AND scrollable. `place-items: center` alone clips the top of
+     anything taller than the box, and the page cannot scroll, so in
+     landscape the Start button was simply unreachable. `margin: auto` on the
+     child centres it while leaving the overflow reachable in both
+     directions. */
+  .overlay { position: absolute; inset: 0; z-index: 4; display: flex;
+             text-align: center; padding: 26px; background: var(--bg);
+             overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .overlay > div { margin: auto; }
   .overlay.hidden { display: none; }
   .overlay h2 { margin: 0 0 10px; font-size: 1.375rem; }
   .overlay p { margin: 0 0 8px; color: var(--muted); max-width: 400px; }
   .overlay .big { font-size: 3rem; line-height: 1; margin-bottom: 14px; }
+
+  /* A phone in landscape leaves roughly 290px once the browser's own bars
+     are accounted for. Everything here has to survive that. */
+  @media (max-height: 430px) {
+    .overlay { padding: 14px 20px; }
+    .overlay h2 { font-size: 1.125rem; margin-bottom: 6px; }
+    .overlay p { font-size: 0.875rem; margin-bottom: 5px; }
+    .overlay .big { font-size: 2rem; margin-bottom: 8px; }
+    .overlay button { margin-top: 10px; padding: 11px 22px; }
+    .banner { padding: calc(4px + env(safe-area-inset-top)) 12px 4px; }
+    .banner h1 { font-size: 0.875rem; margin-bottom: 0; }
+    .banner p { font-size: 0.6875rem; }
+    #last-run { display: none; }
+    video { width: 76px; height: 57px; }
+  }
   .overlay button { margin-top: 18px; padding: 14px 26px; font-size: 1rem; }
   .grade { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em;
            font-weight: 700; padding: 4px 12px; border-radius: 999px;
@@ -140,10 +181,42 @@
   </div>
 </div>
 
+<div class="rotate-guard hidden" id="rotate-guard">
+  <div>
+    <div class="icon">&#8635;</div>
+    <h2 id="rg-title">Turn the phone back</h2>
+    <p id="rg-body">The setup was measured with the phone the other way up.
+       Turning it changes where everything is on screen, so the measurement
+       no longer fits. Turn it back and this will carry on by itself.</p>
+  </div>
+</div>
+
 <script type="module">
 import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
 import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS } from '/static/gaze/calibration.js';
 import { deviceInfo } from '/static/device.js';
+import { track as trackViewport, viewport, onChange as onViewportChange }
+  from '/static/gaze/viewport.js';
+
+// Before anything measures or lays out anything.
+trackViewport();
+
+/* A calibration is a mapping fitted to one screen shape. Rotate the device
+   and every target has moved, so the mapping is wrong — silently, and in a
+   way that looks like ordinary inaccuracy. The run pauses instead. */
+let lockedOrientation = null;
+let paused = false;
+
+function lockOrientation() { lockedOrientation = viewport().orientation; }
+
+onViewportChange((now) => {
+  if (!lockedOrientation) return;
+  const wrong = now.orientation !== lockedOrientation;
+  if (wrong === paused) return;
+  paused = wrong;
+  $('rotate-guard').classList.toggle('hidden', !wrong);
+  if (wrong) crumb('rotated', { to: now.orientation });
+});
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -287,6 +360,9 @@ function renderProgress(done, total, kind) {
 async function begin() {
   attempts++;
   hideOverlay();
+  // Whatever way up the device is now is the geometry everything after this
+  // is fitted to.
+  lockOrientation();
   $('title').textContent = 'Starting the camera';
   $('hint').textContent = 'Allow the camera prompt if it appears.';
 
@@ -401,8 +477,9 @@ async function report(result) {
         points_accepted: result.pointsAccepted,
         points_total: result.pointsTotal,
         validation: result.validation,
-        viewport_w: window.innerWidth,
-        viewport_h: window.innerHeight,
+        viewport_w: viewport().width,
+        viewport_h: viewport().height,
+        orientation: viewport().orientation,
         device_label: navigator.userAgent.slice(0, 120),
         device: deviceInfo(),
         failure: result.failure,
@@ -510,8 +587,12 @@ function toImageCoords(s) {
   // Remove the shared offset before mapping onto the image.
   const vx = s.x - gazeBias[0];
   const vy = s.y - gazeBias[1];
-  const x = (vx * window.innerWidth - r.left) / r.width;
-  const y = (vy * window.innerHeight - r.top) / r.height;
+  // The same measured box the layout is built from. Using innerWidth and
+  // innerHeight here while the page is sized to visualViewport would stretch
+  // every sample against a box the participant cannot see.
+  const vp = viewport();
+  const x = (vx * vp.width - r.left) / r.width;
+  const y = (vy * vp.height - r.top) / r.height;
   const on = x >= 0 && x <= 1 && y >= 0 && y <= 1;
   return { t: Math.round(s.t), x: on ? +x.toFixed(4) : null,
            y: on ? +y.toFixed(4) : null, on_image: on };
@@ -543,8 +624,12 @@ async function runViewingStage() {
   $('stage-view').classList.remove('hidden');
 
   const samples = [];
-  let blinks = 0, offImage = 0;
+  let blinks = 0, offImage = 0, rotatedAway = false;
   tracker.onSample = (s) => {
+    // Rotated away mid-viewing: the calibration no longer describes this
+    // screen, so these samples are not evidence about anything. Dropped
+    // rather than stored looking like data.
+    if (paused) { rotatedAway = true; return; }
     if (!s.ok || s.x == null) return;
     if (s.state === 'closed') { blinks++; return; }
     const m = toImageCoords(s);
@@ -562,6 +647,7 @@ async function runViewingStage() {
 
   tracker.stop();
   $('stage-view').classList.add('hidden');
+  if (rotatedAway) crumb('rotated-during-viewing', { kept: samples.length });
   await uploadSamples(samples, durationMs, blinks, offImage);
 }
 

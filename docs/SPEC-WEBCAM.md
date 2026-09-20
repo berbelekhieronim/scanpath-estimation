@@ -831,3 +831,50 @@ the rest.
 
 The CSV export was removed at the owner's request; the JSON carries
 everything.
+
+
+---
+
+## 17. Landscape on a phone (2026-09-20)
+
+Reported as "landscape doesn't go full screen and can't be scrolled". Two
+faults, one visible and one not.
+
+**The visible one.** iOS Safari sizes `100vh` and `position: fixed; inset: 0`
+against the *large* viewport — the one you get once the toolbars have
+collapsed. In landscape they do not collapse, and the page also sets
+`overflow: hidden` so there is nothing to scroll that would collapse them.
+The page was therefore about a quarter taller than anything the participant
+could see, with its bottom edge behind the toolbar and no way to reach it. On
+the intro screen that put the Start button off the bottom. Compounding it,
+the overlay centred its content with `place-items: center`, which clips the
+top of anything taller than its box rather than letting it overflow
+reachably.
+
+Everything is now sized from `visualViewport`, published to CSS as `--app-w`
+and `--app-h` by `gaze/viewport.js`, with `100dvh` as the fallback. Centred
+overlays scroll internally and centre with `margin: auto`, which keeps the
+overflow reachable in both directions. A `max-height: 430px` block tightens
+type and chrome for the ~290px a phone actually offers in landscape, and the
+target now sits above the banner in z-order rather than behind it.
+
+**The one nobody would have seen.** The tracker returns gaze normalised to
+the screen, and the page converted it with `window.innerWidth/innerHeight`.
+Once the visible box and the layout viewport disagree — which is exactly what
+was happening — every sample was being stretched against a box the
+participant could not see. That is not a layout glitch; it is a silent
+accuracy loss that would have read as ordinary webcam imprecision. The
+mapping and the layout now take the same measured numbers.
+
+**Rotation invalidates a calibration**, because the calibration is a mapping
+fitted to one screen shape. Rather than record samples that look like data,
+the run now locks the orientation it started in, pauses behind a "turn it
+back" screen if the device is rotated, and drops any samples that arrive
+while it is turned the wrong way. The orientation is stored with the session
+so it can be read back, and `tools/device_report.py` reports it.
+
+**This was verified at the sizes iOS produces, not on iOS.** Headless
+Chromium does not reproduce Safari's split between the layout and visual
+viewports, so the fix is verified as "the layout follows the measurement" at
+812x294 and 812x375 rather than as "confirmed on an iPhone". Worth one pass
+on the actual device.

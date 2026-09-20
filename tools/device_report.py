@@ -90,6 +90,10 @@ def main():
             diag = {}
         b["resid"].append(diag.get("residual_error"))
         b["grades"][r["grade"]] = b["grades"].get(r["grade"], 0) + 1
+        o = diag.get("orientation")
+        if o:
+            b.setdefault("orientation", {})
+            b["orientation"][o] = b["orientation"].get(o, 0) + 1
         if r["viewport_w"]:
             b["viewports"].add(f"{r['viewport_w']}x{r['viewport_h']}")
 
@@ -102,6 +106,9 @@ def main():
         print(summarise(b["resid"], "after correction"))
         grades = ", ".join(f"{k}:{v}" for k, v in sorted(b["grades"].items()))
         print(f"  {'grades':18s}  {grades}")
+        if b.get("orientation"):
+            held = ", ".join(f"{k}:{v}" for k, v in sorted(b["orientation"].items()))
+            print(f"  {'held':18s}  {held}")
         if b["viewports"]:
             print(f"  {'viewports':18s}  {', '.join(sorted(b['viewports']))}")
         print()

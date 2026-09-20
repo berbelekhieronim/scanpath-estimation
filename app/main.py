@@ -668,6 +668,10 @@ class GazeSession(BaseModel):
     validation: Optional[list] = None
     viewport_w: Optional[int] = None
     viewport_h: Optional[int] = None
+    # Which way up the device was. A calibration is a mapping fitted to one
+    # screen shape, so a session taken in landscape is not comparable to one
+    # taken in portrait and has to be readable back as such.
+    orientation: Optional[str] = None
     device_label: Optional[str] = None
     device: Optional[dict] = None
     failure: Optional[str] = None

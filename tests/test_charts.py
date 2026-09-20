@@ -435,3 +435,66 @@ def test_device_classes_split_phones_from_laptops():
     # A session recorded before device capture existed must not be silently
     # counted as a laptop.
     assert device_report.device_class({}, None, None) == "unknown"
+
+
+# --- landscape on a phone -------------------------------------------------
+
+CALIBRATE = STATIC / "calibrate.html"
+VIEWPORT_JS = STATIC / "gaze" / "viewport.js"
+
+
+def test_layout_is_sized_from_the_measured_visible_viewport():
+    """iOS sizes 100vh and `inset: 0` against the viewport WITHOUT toolbars.
+    In landscape the toolbars stay, so the page was about a quarter taller
+    than anything visible — and `overflow: hidden` meant no scrolling to it."""
+    assert VIEWPORT_JS.exists()
+    js = VIEWPORT_JS.read_text()
+    assert "visualViewport" in js
+    assert "--app-h" in js and "--app-w" in js
+
+    css = CALIBRATE.read_text()
+    assert "var(--app-h" in css
+    # The old unconditional full-bleed rule must not come back.
+    assert "position: fixed; inset: 0; touch-action" not in css
+
+
+def test_gaze_is_mapped_against_the_same_box_as_the_layout():
+    """Mapping with innerHeight while the page is sized to visualViewport
+    stretches every sample against a box the participant cannot see."""
+    page = CALIBRATE.read_text()
+    assert "vx * vp.width" in page and "vy * vp.height" in page
+    assert "window.innerWidth" not in page
+    assert "window.innerHeight" not in page
+
+
+def test_centred_overlays_stay_reachable_when_taller_than_the_screen():
+    """`place-items: center` clips the top of anything too tall, and the page
+    cannot scroll, so in landscape the Start button was unreachable."""
+    css = CALIBRATE.read_text()
+    assert "overflow-y: auto" in css
+    assert ".overlay > div { margin: auto; }" in css
+    assert "@media (max-height: 430px)" in css
+
+
+def test_rotating_pauses_instead_of_recording_nonsense():
+    """A calibration is fitted to one screen shape. Rotate and it is wrong,
+    silently, in a way that looks like ordinary inaccuracy."""
+    page = CALIBRATE.read_text()
+    assert "rotate-guard" in page
+    assert "lockOrientation()" in page
+    assert "if (paused) { rotatedAway = true; return; }" in page
+
+
+def test_orientation_is_recorded_with_the_calibration(client):
+    """So a session reads back knowing which way up it was taken. Pydantic
+    drops unknown fields silently, so this asserts it round-trips rather
+    than that the request was accepted."""
+    import json as _json
+    from app import db
+
+    r = client.post("/api/gaze/session", json={
+        "participant_uuid": "rotate-0001", "grade": "usable",
+        "viewport_w": 812, "viewport_h": 294, "orientation": "landscape"})
+    assert r.status_code == 200
+    sess = db.get_gaze_session(r.json()["session_id"])
+    assert _json.loads(sess["diagnostics_json"])["orientation"] == "landscape"
