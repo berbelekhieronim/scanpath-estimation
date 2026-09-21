@@ -383,11 +383,27 @@ def list_model_runs() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
             "SELECT m.id, m.image_id, m.mode, m.target, m.n_fixations, "
-            "m.source, m.created_at, i.filename, i.label "
+            "m.source, m.created_at, m.coords_json, i.filename, i.label "
             "FROM model_runs m JOIN images i ON i.id = m.image_id "
             "ORDER BY i.sort_order, m.mode, m.target"
-        )
-        return [dict(r) for r in rows]
+        ).fetchall()
+
+    import json as _json
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        # How many virtual observers the run holds. Without it the only
+        # number on screen was the fixation count, and a run of 10 fixations
+        # by 20 observers reads as "the n10" or "the n20" depending on which
+        # one you happened to have in mind.
+        try:
+            payload = _json.loads(d.pop("coords_json") or "{}")
+            d["samples"] = len(payload.get("samples_norm") or []) or 1
+        except Exception:
+            d["samples"] = 1
+        out.append(d)
+    return out
 
 
 def sync_model_runs_from_disk() -> dict:

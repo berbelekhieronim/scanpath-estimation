@@ -395,3 +395,37 @@ def test_greedy_decoding_does_not_pretend_to_sample():
     src = (Path(__file__).resolve().parent.parent
            / "tools" / "predict.py").read_text()
     assert "n_samples = 1" in src
+
+
+def test_more_than_one_fixation_count_can_coexist_and_be_chosen(env):
+    """Two real runs of the same task at different fixation counts are not
+    interchangeable, and there was no way to pick between them."""
+    import json as _json
+
+    run = {"image": "a.jpg", "mode": "freeview", "target": None,
+           "n_fixations": 10, "scanpath_norm": [[0.5, 0.5]] * 10,
+           "samples_norm": [[[0.5, 0.5]] * 10] * 4, "source": "precomputed"}
+    (env / "model" / "a__freeview__n10.json").write_text(_json.dumps(run))
+    run5 = dict(run, n_fixations=5, scanpath_norm=[[0.3, 0.3]] * 5,
+                samples_norm=[[[0.3, 0.3]] * 5] * 4)
+    (env / "model" / "a__freeview__n5.json").write_text(_json.dumps(run5))
+
+    with start(env) as client:
+        counts = {r["n_fixations"]
+                  for r in client.get("/api/model/runs").json()["runs"]}
+        assert counts == {5, 10}
+
+        for n in (5, 10):
+            client.post("/api/control/model-config", json={"n_fixations": n},
+                        headers=AUTH)
+            assert client.get("/api/model").json()["run"]["n_fixations"] == n
+
+
+def test_the_control_page_offers_the_counts_that_exist():
+    """Listing counts that have no run on disk would offer a dead choice."""
+    page = (Path(__file__).resolve().parent.parent
+            / "app" / "static" / "control.html").read_text()
+    assert "renderFixationChoice" in page
+    assert "/api/model/runs" in page
+    # And it says why the two are not like for like.
+    assert "not because it is" in page

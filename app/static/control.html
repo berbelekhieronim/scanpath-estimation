@@ -145,6 +145,11 @@
         <select id="probe" style="max-width:320px"></select>
       </div>
       <div class="sub" id="probe-note" style="margin-bottom:10px"></div>
+      <div class="row" style="margin-bottom:8px">
+        <label style="min-width:110px">Fixations</label>
+        <select id="n-fixations" style="max-width:320px"></select>
+      </div>
+      <div class="sub" id="nfix-note" style="margin-bottom:10px"></div>
       <div class="row">
         <button id="rescan-model">Reload runs from disk</button>
       </div>
@@ -334,6 +339,11 @@ async function refresh() {
          <span style="opacity:.7">(${c.tap.assigned} / ${c.gaze.assigned} assigned)</span>`)
       + gazeLine;
     renderModelStatus(model);
+    // Which fixation counts actually exist on disk for the chosen task.
+    try {
+      const { runs } = await fetch('/api/model/runs').then((r) => r.json());
+      renderFixationChoice(runs, model.config);
+    } catch {}
   } catch {}
 }
 
@@ -396,6 +406,54 @@ function renderProbeNote(probe) {
 }
 
 $('probe').addEventListener('change', (e) => setModelConfig({ probe: e.target.value }));
+$('n-fixations').addEventListener('change',
+  (e) => setModelConfig({ n_fixations: Number(e.target.value) }));
+
+/* Which precomputed run to show.
+ *
+ * Labelled with both numbers, because a run of ten fixations by twenty
+ * observers is "the n10" or "the n20" depending on which you had in mind, and
+ * the select used to show only the first of them.
+ *
+ * Runs at different fixation counts are not interchangeable: more fixations
+ * per virtual observer gives the model a better-estimated map and a higher
+ * self-agreement ceiling than the human groups get from five taps each, so
+ * the comparison is not quite like for like. Worth switching deliberately.
+ */
+function renderFixationChoice(runs, cfg) {
+  const sel = $('n-fixations');
+  const here = (runs || []).filter((r) => r.mode === cfg.mode
+    && (r.target || null) === (cfg.target || null));
+
+  const byCount = new Map();
+  here.forEach((r) => byCount.set(r.n_fixations, r));
+  // The stored setting always appears, even with no run behind it, or the
+  // select would show one thing while the server used another.
+  if (!byCount.has(cfg.n_fixations)) byCount.set(cfg.n_fixations, null);
+
+  const counts = [...byCount.keys()].sort((a, b) => a - b);
+  sel.disabled = counts.length < 2;
+  sel.innerHTML = counts.map((n) => {
+    const r = byCount.get(n);
+    const label = r
+      ? `${n} fixations \u00b7 ${r.samples} observer${r.samples === 1 ? '' : 's'}`
+        + (r.source === 'synthetic' ? ' \u00b7 SYNTHETIC' : '')
+      : `${n} fixations \u00b7 no run on disk`;
+    return `<option value="${n}">${label}</option>`;
+  }).join('');
+  if (document.activeElement !== sel) sel.value = String(cfg.n_fixations);
+
+  const real = counts.filter((n) => byCount.get(n));
+  $('nfix-note').innerHTML = !real.length
+    ? 'No precomputed run for this task. Generate one with '
+      + '<code>tools/precompute.py</code>, then press reload.'
+    : real.length > 1
+      ? 'More than one run exists for this task. A run with more fixations '
+        + 'gives the model a steadier map than five taps gives a person, so '
+        + 'its agreement with itself will read higher \u2014 '
+        + 'not because it is better, but because it has more to go on.'
+      : '';
+}
 
 $('view-ms').addEventListener('change', async (e) => {
   try {
