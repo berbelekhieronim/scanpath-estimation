@@ -320,15 +320,17 @@ python tools/push_result.py --repo ../DeepGaze3.5-VL \
     --image data/images/street.jpg --mode freeview --num-fixations 5
 ```
 
-Runs on NVIDIA as well as on the Mac — device and numeric format are both
-picked for the hardware. Two things to know if you move it to a GPU box:
+Runs on both machines; see `docs/SPEC-HARDWARE.md` for the split and
+`python tools/predict.py --profile` for what yours will do. Two things to
+know if you move it to the GPU box:
 
 - **bfloat16 needs Ampere or newer** (RTX 30-series and up). A GTX card or an
   RTX 20-series has no native bfloat16; `--dtype auto` now detects that and
   uses float16 instead. It used to default to bfloat16 unconditionally.
-- **VRAM: about 16GB of weights** before activations. Fine on 24GB, tight or
-  impossible on 10-12GB. The tools print the card and warn before the
-  download rather than after the out-of-memory.
+- **VRAM: about 16GB of weights** before activations. A 5070 Ti's 16GB is
+  exactly filled by them, so that card is loaded in 8-bit automatically.
+  Install from `requirements-cuda.txt`, and read its header — Blackwell needs
+  a torch built for CUDA 12.8.
 
 The first real run took 85 minutes on MPS. Before assuming a GPU fixes that,
 run `tools/bench_model.py` — see `docs/SPEC-EXPERIMENTS.md`.

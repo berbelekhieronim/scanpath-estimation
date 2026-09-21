@@ -107,6 +107,10 @@ def main():
                     help="Cap InternVL's dynamic image tiling")
     ap.add_argument("--load-on-device", action="store_true",
                     help="Merge the LoRA on the accelerator, not on CPU")
+    ap.add_argument("--quant", choices=["none", "8bit", "4bit"], default=None,
+                    help="Quantise the weights; the profile chooses by default")
+    ap.add_argument("--chunk", type=int, default=None,
+                    help="Samples per generate() call; the profile chooses")
     ap.add_argument("--force", action="store_true", help="Re-run existing outputs")
     args = ap.parse_args()
 
@@ -167,10 +171,17 @@ def main():
     model = processor = None
     if not args.synthetic:
         import predict
+        import backends
         device = predict.pick_device(args.device)
-        dtype_name = predict.pick_dtype(args.dtype, device)
-        print(f"Device: {device}   dtype: {dtype_name}")
-        predict.check_vram(device, dtype_name)
+        prof = backends.detect(device, args.quant, args.chunk)
+        if args.dtype != "auto":
+            prof.dtype = args.dtype
+        if args.attn:
+            prof.attn = args.attn
+        if args.max_tiles:
+            prof.max_tiles = args.max_tiles
+        dtype_name = prof.dtype
+        print(backends.describe(prof))
         # Freeview and search use different adapters, so a mixed run reloads.
         adapters_needed = {adapter_for(m) for _, m, _ in jobs}
         if len(adapters_needed) > 1:
@@ -208,7 +219,8 @@ def main():
                 if adapter != loaded_adapter:
                     model, processor = predict.load_model(
                         args.repo, adapter, device, dtype_name,
-                        attn=args.attn, on_device=args.load_on_device)
+                        attn=prof.attn, quant=prof.quant,
+                        on_device=args.load_on_device or prof.load_on_device)
                     loaded_adapter = adapter
 
                 image = Image.open(img).convert("RGB")
@@ -216,7 +228,7 @@ def main():
                     model, processor, image, prompt_text, args.samples,
                     args.temperature, args.seed, device,
                     max(64, 16 * args.num_fixations + 16),
-                    max_tiles=args.max_tiles)
+                    max_tiles=prof.max_tiles, chunk=prof.sample_chunk)
                 samples = [s for s in (gp.parse_scanpath(t) for t in texts) if s]
                 if not samples:
                     raise RuntimeError(f"no parseable coordinates: {texts[:1]}")

@@ -1,0 +1,42 @@
+# Model inference on NVIDIA. NOT for the Codespace: the web app never
+# imports torch.
+#
+# INSTALL TORCH FIRST, from the right index. The default PyPI wheel may be
+# built for an older CUDA than your card needs:
+#
+#   # Blackwell (RTX 50-series, e.g. 5070 Ti) needs 2.7+ on CUDA 12.8.
+#   # An older wheel has no kernels for sm_120 and fails at the first
+#   # matmul with "no kernel image is available for execution on the device".
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#
+#   # Ada / Ampere (RTX 40-, 30-series) are fine on the default wheel.
+#
+# Then:
+#   pip install -r requirements-cuda.txt
+#
+# VRAM is the constraint here, not memory pressure: 8B parameters is about
+# 16GB in 16-bit, and a card that cannot hold that raises rather than swaps.
+#
+#   24GB (3090/4090)  fits in 16-bit with room to work
+#   16GB (5070 Ti)    does NOT — the weights alone fill the card. Load in
+#                     8-bit (~8GB) or 4-bit (~4.5GB); bitsandbytes below.
+#
+# tools/backends.py detects this and picks quantisation and chunk size for
+# you. Check what your card gets with:
+#
+#   python tools/predict.py --profile --device cuda --repo . --image .
+
+torch>=2.7.0
+transformers>=4.57.0
+peft>=0.18.0
+accelerate>=1.0.0
+safetensors>=0.7.0
+Pillow>=11.0.0
+numpy>=2.0.0
+scipy>=1.15.0
+tqdm>=4.67.0
+requests>=2.32.0
+
+# Required whenever the profile chooses 8-bit or 4-bit, which it does on any
+# card under about 20GB. Needs a recent release for Blackwell.
+bitsandbytes>=0.45.0

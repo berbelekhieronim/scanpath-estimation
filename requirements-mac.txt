@@ -1,0 +1,33 @@
+# Model inference on Apple Silicon (M1-M4). NOT for the Codespace: the web
+# app never imports torch.
+#
+#   python3 -m venv .venv-model
+#   source .venv-model/bin/activate
+#   pip install -r requirements-mac.txt
+#
+# Memory is the constraint here, not speed. The weights are about 16GB in
+# 16-bit and unified memory is shared with everything else — and when it runs
+# out it does not raise, it swaps. A swapping 8B model is indistinguishable
+# from a slow one, which is the leading explanation for the first run taking
+# eighty-five minutes.
+#
+# The defaults in tools/backends.py account for that: samples run a few at a
+# time rather than all at once, because one call for ten samples multiplies
+# the KV cache by ten. Check what your machine gets with:
+#
+#   python tools/predict.py --profile --device mps --repo . --image .
+#
+# psutil is only used to read total memory for that profile; without it the
+# profile falls back to a conservative guess.
+
+torch>=2.5.0
+transformers>=4.57.0
+peft>=0.18.0
+accelerate>=1.0.0
+safetensors>=0.7.0
+Pillow>=11.0.0
+numpy>=2.0.0
+scipy>=1.15.0
+psutil>=6.0.0
+tqdm>=4.67.0
+requests>=2.32.0

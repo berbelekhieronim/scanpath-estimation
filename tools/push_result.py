@@ -120,13 +120,19 @@ def main():
             prompt_text, prompt_kind = gp.build_prompt(args.mode, n, args.target), "trained"
         adapter = ("combined_adapter" if args.mode == "freeview"
                    else "visual_search_adapter")
+        import backends
         device = predict.pick_device(args.device)
-        dtype_name = predict.pick_dtype(args.dtype, device)
-        predict.check_vram(device, dtype_name)
+        prof = backends.detect(device)
+        if args.dtype != "auto":
+            prof.dtype = args.dtype
+        dtype_name = prof.dtype
+        print(backends.describe(prof), file=sys.stderr)
 
         print(f"Running on {device} — this takes a few minutes. "
               f"Keep the precomputed run on screen meanwhile.", flush=True)
-        model, processor = predict.load_model(args.repo, adapter, device, dtype_name)
+        model, processor = predict.load_model(
+            args.repo, adapter, device, dtype_name, attn=prof.attn,
+            quant=prof.quant, on_device=prof.load_on_device)
         image = Image.open(args.image).convert("RGB")
 
         t0 = time.time()

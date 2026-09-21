@@ -45,10 +45,12 @@ import gaze_prompts as gp  # noqa: E402
 
 
 def pick_device(requested: str) -> str:
-    import torch
-
+    # torch only where it is needed: an explicit choice is an answer already,
+    # and asking for one should not require the whole stack to be installed.
     if requested != "auto":
         return requested
+    import torch
+
     # CUDA first: where both exist it is the faster path by a wide margin,
     # and the ordering used to hand an RTX machine to Apple's backend.
     if torch.cuda.is_available():
@@ -125,7 +127,7 @@ def check_vram(device: str, dtype_name: str) -> None:
 
 
 def load_model(repo: str, adapter: str, device: str, dtype_name: str,
-               attn: str = None, on_device: bool = False):
+               attn: str = None, on_device: bool = False, quant: str = "none"):
     """Base model + LoRA adapter, merged, on the chosen device.
 
     `on_device` loads the weights straight onto the accelerator so the LoRA
@@ -159,6 +161,24 @@ def load_model(repo: str, adapter: str, device: str, dtype_name: str,
         kw["attn_implementation"] = attn
     if on_device and device != "cpu":
         kw["device_map"] = {"": device}
+
+    if quant in ("8bit", "4bit"):
+        # The only way an 8B model fits a 16GB card with room to work in.
+        try:
+            from transformers import BitsAndBytesConfig
+            kw["quantization_config"] = (
+                BitsAndBytesConfig(load_in_8bit=True) if quant == "8bit"
+                else BitsAndBytesConfig(
+                    load_in_4bit=True, bnb_4bit_compute_dtype=dtype,
+                    bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True))
+            kw["device_map"] = {"": device}
+            print(f"Loading in {quant} — needs bitsandbytes.", file=sys.stderr)
+        except ImportError:
+            raise SystemExit(
+                f"--quant {quant} needs bitsandbytes:\n"
+                f"    pip install bitsandbytes\n"
+                f"Without it an 8B model needs about 16GB of VRAM for the "
+                f"weights alone.")
 
     try:
         model = AutoModelForImageTextToText.from_pretrained(gp.BASE_MODEL, **kw)
@@ -207,18 +227,29 @@ def _tiling_kwargs(processor, image, chat, max_tiles):
 
 
 def predict(model, processor, image, prompt_text, n_samples, temperature,
-            seed, device, max_new_tokens, max_tiles=None):
-    """All samples in one generate() call.
+            seed, device, max_new_tokens, max_tiles=None, chunk=None,
+            progress=None):
+    """All the samples, in chunks small enough to stay resident.
 
-    This used to claim it paid the image prefill once for every sample. That
-    is very likely false: transformers expands the batch for
-    num_return_sequences *before* prefill, repeat-interleaving pixel_values
-    with everything else, so the vision tower probably encodes n identical
-    copies of the photograph. `tools/bench_model.py` settles it by timing one
-    sample against n — if the ratio is near n, the prefill is being repeated.
+    This used to ask generate() for every sample at once, and claimed that
+    paid the image prefill a single time. That is very likely false —
+    transformers expands the batch for num_return_sequences *before* prefill,
+    repeat-interleaving pixel_values with everything else — and it is
+    certainly not free in memory: the KV cache is multiplied by the sample
+    count. Ten at once is 16GB of weights plus ten copies of a cache over
+    thousands of vision tokens.
 
-    It is still one call rather than n calls, which keeps the weights and the
-    processor work shared. But do not read it as free.
+    On a 16GB card that raises. On a 32GB Mac it does something worse: unified
+    memory does not fail, it swaps, and swapping an 8B model looks exactly
+    like the model being slow. That is the leading candidate for the
+    eighty-five minutes.
+
+    So the samples run in chunks. Each chunk pays its own prefill, which is
+    the cost; in exchange the working set stays inside the machine, which on
+    both of these machines is worth far more.
+
+    Each chunk gets its own seed. Reusing one seed across chunks would return
+    the same scanpath every time and quietly collapse ten observers into one.
     """
     import torch
 
@@ -226,27 +257,53 @@ def predict(model, processor, image, prompt_text, n_samples, temperature,
         {"type": "image"}, {"type": "text", "text": prompt_text}]}]
     chat = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True)
+
     proc_kw = _tiling_kwargs(processor, image, chat, max_tiles)
     inputs = processor(images=image, text=chat, return_tensors="pt",
                        **proc_kw).to(device)
-
-    torch.manual_seed(seed)
-    greedy = temperature <= 0.0
-    with torch.inference_mode():
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=not greedy,
-            temperature=None if greedy else temperature,
-            num_return_sequences=1 if greedy else n_samples,
-            pad_token_id=processor.tokenizer.pad_token_id
-                         or processor.tokenizer.eos_token_id,
-        )
-
     prompt_len = inputs["input_ids"].shape[-1]
-    texts = processor.tokenizer.batch_decode(
-        out[:, prompt_len:], skip_special_tokens=True)
+
+    greedy = temperature <= 0.0
+    if greedy:
+        n_samples = 1                       # every sample would be identical
+    size = max(1, chunk or n_samples)
+    texts = []
+
+    for i, start in enumerate(range(0, n_samples, size)):
+        k = min(size, n_samples - start)
+        # A distinct seed per chunk, derived from the run's seed so the whole
+        # run stays reproducible.
+        torch.manual_seed(seed + i)
+        with torch.inference_mode():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=not greedy,
+                temperature=None if greedy else temperature,
+                num_return_sequences=k,
+                pad_token_id=processor.tokenizer.pad_token_id
+                             or processor.tokenizer.eos_token_id,
+            )
+        texts.extend(processor.tokenizer.batch_decode(
+            out[:, prompt_len:], skip_special_tokens=True))
+        del out
+        _release(device)
+        if progress:
+            progress(len(texts), n_samples)
+
     return texts
+
+
+def _release(device):
+    """Hand the cache back between chunks, or chunking buys nothing."""
+    import torch
+    try:
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        elif device == "mps":
+            torch.mps.empty_cache()
+    except Exception:
+        pass
 
 
 def main():
@@ -283,6 +340,14 @@ def main():
     ap.add_argument("--load-on-device", action="store_true",
                     help="Materialise weights on the accelerator so the LoRA "
                          "merge runs there instead of as CPU matmuls")
+    ap.add_argument("--quant", choices=["none", "8bit", "4bit"], default=None,
+                    help="Quantise the weights. The profile chooses this for "
+                         "you; override when you know better")
+    ap.add_argument("--chunk", type=int, default=None,
+                    help="Samples per generate() call. Smaller keeps the "
+                         "working set resident; the profile picks a default")
+    ap.add_argument("--profile", action="store_true",
+                    help="Print the hardware profile and exit")
     ap.add_argument("--prompt", help=(
         "EXPERIMENTAL. Replace the trained prompt with your own text. The "
         "adapter was fine-tuned on two exact templates; anything else is "
@@ -291,6 +356,13 @@ def main():
         "silently. Runs made this way are badged in the UI."))
     ap.add_argument("--output", help="Write result JSON here")
     args = ap.parse_args()
+
+    import backends
+    if args.profile:
+        device = pick_device(args.device)
+        print(backends.describe(
+            backends.detect(device, args.quant, args.chunk)))
+        return 0
 
     if args.probe:
         pr = gp.PROBES_BY_ID.get(args.probe)
@@ -329,23 +401,29 @@ def main():
     image = Image.open(args.image).convert("RGB")
 
     device = pick_device(args.device)
-    dtype_name = pick_dtype(args.dtype, device)
-    print(f"Device: {device}   dtype: {dtype_name}", file=sys.stderr)
-    check_vram(device, dtype_name)
-    if device == "cpu":
-        print("CPU inference works but is slow (10-20 min/image is normal).",
-              file=sys.stderr)
+    prof = backends.detect(device, args.quant, args.chunk)
+    if args.dtype != "auto":
+        prof.dtype = args.dtype
+    if args.attn:
+        prof.attn = args.attn
+    if args.max_tiles:
+        prof.max_tiles = args.max_tiles
+    dtype_name = prof.dtype
+    print(backends.describe(prof), file=sys.stderr)
 
     # Probes are task-directed, so they use the search adapter.
     adapter = "combined_adapter" if args.mode == "freeview" else "visual_search_adapter"
     model, processor = load_model(args.repo, adapter, device, dtype_name,
-                                  attn=args.attn,
-                                  on_device=args.load_on_device)
+                                  attn=prof.attn, quant=prof.quant,
+                                  on_device=args.load_on_device
+                                  or prof.load_on_device)
 
     t0 = time.time()
     texts = predict(model, processor, image, prompt_text, args.samples,
                     args.temperature, args.seed, device, max_new,
-                    max_tiles=args.max_tiles)
+                    max_tiles=prof.max_tiles, chunk=prof.sample_chunk,
+                    progress=lambda done, total: print(
+                        f"  {done}/{total} samples", file=sys.stderr))
     elapsed = time.time() - t0
 
     samples_grid = [gp.parse_scanpath(t) for t in texts]
@@ -378,6 +456,9 @@ def main():
         "model": f"{gp.BASE_MODEL} + {adapter}",
         "device": device,
         "dtype": dtype_name,
+        "profile": prof.name,
+        "quant": prof.quant,
+        "sample_chunk": prof.sample_chunk,
         "elapsed_seconds": round(elapsed, 1),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

@@ -318,3 +318,80 @@ def test_cuda_is_preferred_over_mps_when_both_are_present(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "torch", FakeTorch)
     assert predict.pick_device("auto") == "cuda"
+
+
+# --- hardware profiles ----------------------------------------------------
+
+def _backends():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import backends
+    return backends
+
+
+def test_a_16gb_card_is_quantised_because_the_weights_alone_fill_it():
+    """8B parameters in 16-bit is ~16GB. A 5070 Ti has exactly 16GB, so
+    loading unquantised leaves nothing for activations and the run raises."""
+    b = _backends()
+    p = b._cuda_profile(16.0, bf16=True, capability=(12, 0))
+    assert p.quant == "8bit"
+    assert p.max_tiles is not None          # smaller prefill too
+    assert any("8-bit" in n for n in p.notes)
+    # Blackwell needs a torch new enough to have kernels for it.
+    assert any("2.7" in n for n in p.notes)
+
+
+def test_a_24gb_card_is_left_alone():
+    """Quantising a card that does not need it costs accuracy for nothing."""
+    b = _backends()
+    p = b._cuda_profile(24.0, bf16=True, capability=(8, 9))
+    assert p.quant == "none"
+    assert p.sample_chunk >= 8
+    assert not any("2.7" in n for n in p.notes)
+
+
+def test_apple_silicon_never_asks_for_every_sample_at_once():
+    """Unified memory does not raise when it runs out, it swaps — and one
+    generate() call for ten samples multiplies the KV cache by ten."""
+    b = _backends()
+    for total in (16.0, 32.0, 64.0):
+        p = b._mps_profile(total)
+        assert p.quant == "none"            # the weights do fit
+        assert 1 <= p.sample_chunk <= 4, total
+    # The smallest machine is the most cautious.
+    assert b._mps_profile(16.0).sample_chunk < b._mps_profile(64.0).sample_chunk
+
+
+def test_an_unreadable_gpu_gets_the_cautious_profile():
+    """Guessing small costs some speed; guessing big costs the run."""
+    b = _backends()
+    p = b.detect("cuda")                    # no torch in this container
+    assert p.quant == "8bit"
+    assert p.sample_chunk <= 2
+    assert any("cautious" in n for n in p.notes)
+
+
+def test_explicit_choices_override_the_profile():
+    b = _backends()
+    p = b.detect("cpu", requested_quant="4bit", requested_chunk=7)
+    assert p.quant == "4bit" and p.sample_chunk == 7
+
+
+def test_chunked_sampling_varies_the_seed_per_chunk():
+    """One seed across every chunk returns the same scanpath each time and
+    collapses ten observers into one — silently, since the output still
+    looks like ten samples."""
+    src = (Path(__file__).resolve().parent.parent
+           / "tools" / "predict.py").read_text()
+    assert "torch.manual_seed(seed + i)" in src
+    # And the cache is handed back between chunks, or chunking buys nothing.
+    assert "_release(device)" in src
+
+
+def test_greedy_decoding_does_not_pretend_to_sample():
+    """At temperature 0 every sample is identical, so asking for ten is ten
+    times the work for one answer."""
+    src = (Path(__file__).resolve().parent.parent
+           / "tools" / "predict.py").read_text()
+    assert "n_samples = 1" in src
