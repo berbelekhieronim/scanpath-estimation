@@ -237,3 +237,84 @@ def test_free_viewing_and_task_modes_map_to_their_own_adapters():
     assert precompute.adapter_for("freeview") == "combined_adapter"
     for mode in ("search", "probe"):
         assert precompute.adapter_for(mode) == "visual_search_adapter"
+
+
+def test_dtype_is_chosen_for_the_hardware_not_hard_coded():
+    """bfloat16 needs compute capability 8.0. It was the unconditional
+    default, so a GTX card or an RTX 20-series — neither of which has native
+    bfloat16 — would have hit it."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import predict
+
+    # An explicit choice is always honoured.
+    for d in ("bfloat16", "float16", "float32"):
+        assert predict.pick_dtype(d, "cuda") == d
+    # CPU never gets bfloat16: it is slower there than the format it was
+    # meant to speed up.
+    assert predict.pick_dtype("auto", "cpu") == "float32"
+    assert predict.pick_dtype("auto", "mps") == "bfloat16"
+
+
+def test_pre_ampere_cards_fall_back_to_float16(monkeypatch):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import predict
+
+    class FakeCuda:
+        @staticmethod
+        def is_bf16_supported():
+            return False
+
+        @staticmethod
+        def get_device_capability():
+            return (6, 1)          # Pascal, as in a GTX 10-series
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    assert predict.pick_dtype("auto", "cuda") == "float16"
+
+
+def test_ampere_and_newer_keep_bfloat16(monkeypatch):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import predict
+
+    class FakeCuda:
+        @staticmethod
+        def is_bf16_supported():
+            return True
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    assert predict.pick_dtype("auto", "cuda") == "bfloat16"
+
+
+def test_cuda_is_preferred_over_mps_when_both_are_present(monkeypatch):
+    """The ordering used to hand an NVIDIA machine to Apple's backend."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import predict
+
+    class FakeTorch:
+        class cuda:
+            @staticmethod
+            def is_available():
+                return True
+
+        class backends:
+            class mps:
+                @staticmethod
+                def is_available():
+                    return True
+
+    monkeypatch.setitem(sys.modules, "torch", FakeTorch)
+    assert predict.pick_device("auto") == "cuda"

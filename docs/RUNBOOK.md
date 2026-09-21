@@ -320,9 +320,18 @@ python tools/push_result.py --repo ../DeepGaze3.5-VL \
     --image data/images/street.jpg --mode freeview --num-fixations 5
 ```
 
-On a CUDA machine add `--device cuda`; auto-detection prefers it. The first
-real run took 85 minutes on MPS, which is minutes on an RTX — see
-`docs/SPEC-EXPERIMENTS.md` for what that makes worth running.
+Runs on NVIDIA as well as on the Mac — device and numeric format are both
+picked for the hardware. Two things to know if you move it to a GPU box:
+
+- **bfloat16 needs Ampere or newer** (RTX 30-series and up). A GTX card or an
+  RTX 20-series has no native bfloat16; `--dtype auto` now detects that and
+  uses float16 instead. It used to default to bfloat16 unconditionally.
+- **VRAM: about 16GB of weights** before activations. Fine on 24GB, tight or
+  impossible on 10-12GB. The tools print the card and warn before the
+  download rather than after the out-of-memory.
+
+The first real run took 85 minutes on MPS. Before assuming a GPU fixes that,
+run `tools/bench_model.py` — see `docs/SPEC-EXPERIMENTS.md`.
 
 It computes locally and pushes; the display picks it up within two seconds.
 Takes 1–3 minutes — narrate over it, and keep the precomputed run on screen as

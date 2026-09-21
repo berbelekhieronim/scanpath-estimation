@@ -84,8 +84,9 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="auto", choices=["auto", "mps", "cuda", "cpu"])
-    ap.add_argument("--dtype", default="bfloat16",
-                    choices=["bfloat16", "float16", "float32"])
+    ap.add_argument("--dtype", default="auto",
+                    choices=["auto", "bfloat16", "float16", "float32"],
+                    help="auto picks what the hardware supports")
     ap.add_argument("--prompt", help=(
         "EXPERIMENTAL. Your own prompt text instead of the trained template. "
         "Off-distribution; output quality is unvalidated and the run is "
@@ -107,7 +108,7 @@ def main():
 
         import time
         import gaze_prompts as gp
-        import predict_mps
+        import predict
         from PIL import Image
 
         n = args.num_fixations
@@ -119,15 +120,17 @@ def main():
             prompt_text, prompt_kind = gp.build_prompt(args.mode, n, args.target), "trained"
         adapter = ("combined_adapter" if args.mode == "freeview"
                    else "visual_search_adapter")
-        device = predict_mps.pick_device(args.device)
+        device = predict.pick_device(args.device)
+        dtype_name = predict.pick_dtype(args.dtype, device)
+        predict.check_vram(device, dtype_name)
 
         print(f"Running on {device} — this takes a few minutes. "
               f"Keep the precomputed run on screen meanwhile.", flush=True)
-        model, processor = predict_mps.load_model(args.repo, adapter, device, args.dtype)
+        model, processor = predict.load_model(args.repo, adapter, device, dtype_name)
         image = Image.open(args.image).convert("RGB")
 
         t0 = time.time()
-        texts = predict_mps.predict(model, processor, image, prompt_text,
+        texts = predict.predict(model, processor, image, prompt_text,
                                     args.samples, args.temperature, args.seed,
                                     device, max(64, 16 * n + 16))
         elapsed = time.time() - t0

@@ -153,7 +153,7 @@ JS, inline SVG overlays. No framework, no bundler, no npm. Under 50 KB excluding
 images. This was the right call for an unpredictable mix of phones and nothing
 about the pivot changes it.
 
-**Why Python rather than PHP.** You need Python regardless — `predict_mps.py`,
+**Why Python rather than PHP.** You need Python regardless — `predict.py`,
 `precompute.py` and `analysis.py` all live there. The deciding factor is §7: the
 analysis needs mean-shift clustering, Spearman correlation and NSS, which means
 scipy and scikit-learn. In PHP that is either a reimplementation or a subprocess
@@ -211,7 +211,7 @@ torch (MPS) + transformers + peft
   └─ parse_scanpath_reduced(text)                        ← reused as-is
 ```
 
-This becomes `tools/predict_mps.py`. It is a genuinely small script, and because
+This becomes `tools/predict.py`. It is a genuinely small script, and because
 it reuses their prompt builder it produces the same prompt string the model was
 trained on — which is the part that actually determines output quality.
 
@@ -247,7 +247,7 @@ precompute makes runtime invisible at demo time anyway.
 2. `device_map="cpu"` — slow but certain, and 32 GB is sufficient.
 3. A rented 24 GB cloud GPU (RunPod, Vast.ai) for one hour, running the repo's instructions unmodified, for under a euro.
 
-**First task of Phase 4** is validating `predict_mps.py` end to end on your
+**First task of Phase 4** is validating `predict.py` end to end on your
 machine, because this is the one part of the plan that cannot be verified from
 here. Everything upstream of it is independent of the outcome.
 
@@ -382,7 +382,7 @@ scanpath-estimation/
 │   ├── model/                   # precomputed scanpaths, one JSON per run
 │   └── exports/                 # session data, committed after each session
 ├── tools/
-│   ├── predict_mps.py           # single-image inference on Apple Silicon (§4.2)
+│   ├── predict.py           # single-image inference on Apple Silicon (§4.2)
 │   ├── precompute.py            # batch-run the model over all images
 │   ├── push_result.py           # Tier C: POST a local run to the Codespace
 │   └── export.py                # dump session data to data/exports/
@@ -523,7 +523,7 @@ Each phase ends somewhere demonstrable.
 | **1** | Devcontainer, FastAPI skeleton, SQLite schema, image loader, `/admin` | Codespace boots, app runs, images visible |
 | **2** | `/` capture view — tap, order, undo, submit. Plus `/qr` and public port setup | **A phone on mobile data can scan the QR and post markers.** The non-negotiable path works |
 | **3** | `/display` + `/control` — heatmap, ordered paths, layer toggles, image switch, live poll | Full human half of the demo runs end to end |
-| **4** | `tools/predict_mps.py` validated on the MacBook, then `precompute.py` + model layer rendering | Model scanpaths overlay on the image |
+| **4** | `tools/predict.py` validated on the MacBook, then `precompute.py` + model layer rendering | Model scanpaths overlay on the image |
 | **5** | `tools/analysis.py` — AOI derivation + metrics + baselines, Layer 3 panel | Numbers on screen, including the human-to-human ceiling |
 | **6** | `tools/push_result.py` (Tier C live path) + `tools/export.py` | Laptop inference appears on the projector; session data exports cleanly |
 | **7** | Optional: Tier B live service; free-text prompt panel | — |
@@ -627,7 +627,7 @@ during the build, each recorded in the commit that made it:
 - **§7 tie inflation.** Rank correlation counts a shared zero as agreement, so
   areas only one side visited inflate it. The report now surfaces that count.
 
-**Outstanding:** `tools/predict_mps.py` has not been run against the real
+**Outstanding:** `tools/predict.py` has not been run against the real
 model, there being no GPU in the build environment. It is the only unverified
 component and the first thing to validate on the MacBook.
 

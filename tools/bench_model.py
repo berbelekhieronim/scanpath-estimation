@@ -69,7 +69,8 @@ def main():
     ap.add_argument("--image", required=True)
     ap.add_argument("--device", default="auto",
                     choices=["auto", "mps", "cuda", "cpu"])
-    ap.add_argument("--dtype", default="bfloat16")
+    ap.add_argument("--dtype", default="auto",
+                    choices=["auto", "bfloat16", "float16", "float32"])
     ap.add_argument("--samples", type=int, default=8,
                     help="The n to compare against a single sample")
     ap.add_argument("--adapter", default="combined_adapter")
@@ -87,11 +88,13 @@ def main():
     from transformers import AutoModelForImageTextToText, AutoProcessor
     from PIL import Image
 
-    import predict_mps
-    device = predict_mps.pick_device(args.device)
+    import predict
+    device = predict.pick_device(args.device)
+    dtype_name = predict.pick_dtype(args.dtype, device)
     dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16,
-             "float32": torch.float32}[args.dtype]
-    print(f"\nDevice: {device}   dtype: {args.dtype}", file=sys.stderr)
+             "float32": torch.float32}[dtype_name]
+    print(f"\nDevice: {device}   dtype: {dtype_name}", file=sys.stderr)
+    predict.check_vram(device, dtype_name)
     print("\nLoad", file=sys.stderr)
 
     kw = {"dtype": dtype, "trust_remote_code": True, "low_cpu_mem_usage": True}
@@ -197,7 +200,7 @@ def main():
 
     if args.output:
         Path(args.output).write_text(json.dumps({
-            "device": device, "dtype": args.dtype, "attn": args.attn,
+            "device": device, "dtype": dtype_name, "attn": args.attn,
             "max_tiles": args.max_tiles, "tile_kwarg": proc_kw or None,
             "pixel_values_shape": tiles, "prompt_tokens": n_text,
             "steps": dict(marks), "t_one_sample": round(t1, 2),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scanpath inference for DeepGaze3.5-VL on Apple Silicon (or CPU, or CUDA).
+"""Scanpath inference for DeepGaze3.5-VL on NVIDIA, Apple Silicon, or CPU.
 
 Upstream runs through vLLM, whose standard install requires CUDA — which
 Apple Silicon does not have. vLLM is doing exactly one job there, fast batched
@@ -11,7 +11,12 @@ and verified against their source with `gaze_prompts.py --verify`. That is the
 part that determines output quality, because the LoRA was fine-tuned on those
 exact strings.
 
-Setup (on the MacBook, NOT in the Codespace):
+The device and the numeric format are both chosen for the hardware: bfloat16
+on Apple Silicon and on Ampere-or-newer NVIDIA, float16 on older NVIDIA parts
+that have no native bfloat16, float32 on CPU. A GTX card or an RTX 20-series
+falls in that second group.
+
+Setup (on whichever machine has the accelerator, NOT in the Codespace):
 
     git clone https://github.com/Susmit-A/DeepGaze3.5-VL   # needs git-lfs
     python3 -m venv .venv-model && source .venv-model/bin/activate
@@ -19,11 +24,13 @@ Setup (on the MacBook, NOT in the Codespace):
 
 Then:
 
-    python tools/predict_mps.py --repo ../DeepGaze3.5-VL \
+    python tools/predict.py --repo ../DeepGaze3.5-VL \
         --image data/images/street.jpg --mode freeview --num-fixations 5
 
-First run downloads ~16GB of base model from HuggingFace. Expect 1-3 minutes
-per image after that; slower on CPU. That is fine — see spec section 4.2.
+First run downloads ~16GB of base model from HuggingFace. The weights alone
+then need about 16GB of VRAM in 16-bit, which is comfortable on a 24GB card
+and will not fit a 10-12GB one; --max-tiles is the first lever if memory is
+tight. Run tools/bench_model.py before trusting any timing estimate.
 """
 
 import argparse
@@ -52,6 +59,69 @@ def pick_device(requested: str) -> str:
     except Exception:
         pass
     return "cpu"
+
+
+def pick_dtype(requested: str, device: str) -> str:
+    """Choose a numeric format the hardware can actually run.
+
+    bfloat16 is the right default on Apple Silicon and on Ampere or newer
+    NVIDIA parts, and is NOT natively supported below compute capability 8.0.
+    On a GTX card, or an RTX 20-series, asking for bfloat16 gets either an
+    error or a slow emulated path — and 'bfloat16' was the hard-coded
+    default, so every pre-Ampere GPU would have hit it.
+
+    float32 on CPU, because bfloat16 there is slower than the format it was
+    meant to speed up.
+
+    torch is imported only where it is needed — inside the CUDA branch — so
+    the answer for every other device can be had without it.
+    """
+    if requested != "auto":
+        return requested
+    if device == "cuda":
+        import torch
+        try:
+            if torch.cuda.is_bf16_supported():
+                return "bfloat16"
+        except Exception:
+            pass
+        cap = torch.cuda.get_device_capability()
+        print(f"NOTE: this GPU (compute capability {cap[0]}.{cap[1]}) has no "
+              f"native bfloat16; using float16.", file=sys.stderr)
+        return "float16"
+    if device == "mps":
+        return "bfloat16"
+    return "float32"
+
+
+def check_vram(device: str, dtype_name: str) -> None:
+    """Say so before the download, not after the out-of-memory.
+
+    Eight billion parameters at two bytes each is about 16GB of weights
+    before any activations or KV cache. That fits a 24GB card and does not
+    fit a 10 or 11GB one, which is the difference between most of the RTX
+    xx90 line and most of everything older.
+    """
+    import torch
+
+    if device != "cuda":
+        return
+    try:
+        total = torch.cuda.get_device_properties(0).total_memory / 1e9
+        name = torch.cuda.get_device_name(0)
+    except Exception:
+        return
+
+    bytes_per = 4 if dtype_name == "float32" else 2
+    weights = 8.0 * bytes_per          # ~8B parameters
+    print(f"GPU: {name}, {total:.0f}GB — weights alone are about "
+          f"{weights:.0f}GB in {dtype_name}.", file=sys.stderr)
+    if total < weights + 4:
+        print(f"WARNING: that leaves little or nothing for activations and "
+              f"the KV cache. Expect an out-of-memory error. Options, in "
+              f"order of how much they cost you: --max-tiles 4 (far smaller "
+              f"prefill), fewer --samples, load in 8-bit or 4-bit "
+              f"(bitsandbytes), or run on the Mac.", file=sys.stderr)
 
 
 def load_model(repo: str, adapter: str, device: str, dtype_name: str,
@@ -196,8 +266,11 @@ def main():
                     help="0.0 = greedy, one deterministic path")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="auto", choices=["auto", "mps", "cuda", "cpu"])
-    ap.add_argument("--dtype", default="bfloat16",
-                    choices=["bfloat16", "float16", "float32"])
+    ap.add_argument("--dtype", default="auto",
+                    choices=["auto", "bfloat16", "float16", "float32"],
+                    help="auto picks what the hardware supports: bfloat16 on "
+                         "Apple Silicon and Ampere-or-newer NVIDIA, float16 "
+                         "on older cards, float32 on CPU")
     ap.add_argument("--max-new-tokens", type=int, default=None)
     ap.add_argument("--attn", default=None,
                     help="attn_implementation to request (sdpa, "
@@ -256,14 +329,16 @@ def main():
     image = Image.open(args.image).convert("RGB")
 
     device = pick_device(args.device)
-    print(f"Device: {device}", file=sys.stderr)
+    dtype_name = pick_dtype(args.dtype, device)
+    print(f"Device: {device}   dtype: {dtype_name}", file=sys.stderr)
+    check_vram(device, dtype_name)
     if device == "cpu":
         print("CPU inference works but is slow (10-20 min/image is normal).",
               file=sys.stderr)
 
     # Probes are task-directed, so they use the search adapter.
     adapter = "combined_adapter" if args.mode == "freeview" else "visual_search_adapter"
-    model, processor = load_model(args.repo, adapter, device, args.dtype,
+    model, processor = load_model(args.repo, adapter, device, dtype_name,
                                   attn=args.attn,
                                   on_device=args.load_on_device)
 
@@ -302,6 +377,7 @@ def main():
         "source": "live",
         "model": f"{gp.BASE_MODEL} + {adapter}",
         "device": device,
+        "dtype": dtype_name,
         "elapsed_seconds": round(elapsed, 1),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

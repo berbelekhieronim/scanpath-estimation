@@ -96,8 +96,9 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--device", default="auto", choices=["auto", "mps", "cuda", "cpu"])
-    ap.add_argument("--dtype", default="bfloat16",
-                    choices=["bfloat16", "float16", "float32"])
+    ap.add_argument("--dtype", default="auto",
+                    choices=["auto", "bfloat16", "float16", "float32"],
+                    help="auto picks what the hardware supports")
     ap.add_argument("--synthetic", action="store_true",
                     help="Placeholder output, no model. Clearly marked as such.")
     ap.add_argument("--attn", default=None,
@@ -165,9 +166,11 @@ def main():
 
     model = processor = None
     if not args.synthetic:
-        import predict_mps
-        device = predict_mps.pick_device(args.device)
-        print(f"Device: {device}")
+        import predict
+        device = predict.pick_device(args.device)
+        dtype_name = predict.pick_dtype(args.dtype, device)
+        print(f"Device: {device}   dtype: {dtype_name}")
+        predict.check_vram(device, dtype_name)
         # Freeview and search use different adapters, so a mixed run reloads.
         adapters_needed = {adapter_for(m) for _, m, _ in jobs}
         if len(adapters_needed) > 1:
@@ -197,19 +200,19 @@ def main():
                                               args.samples, args.seed)
                 source, model_name, device_used = "synthetic", "SYNTHETIC (no model)", "none"
             else:
-                import predict_mps
+                import predict
                 from PIL import Image
 
                 # Probes are task-directed, so they use the search adapter.
                 adapter = adapter_for(mode)
                 if adapter != loaded_adapter:
-                    model, processor = predict_mps.load_model(
-                        args.repo, adapter, device, args.dtype,
+                    model, processor = predict.load_model(
+                        args.repo, adapter, device, dtype_name,
                         attn=args.attn, on_device=args.load_on_device)
                     loaded_adapter = adapter
 
                 image = Image.open(img).convert("RGB")
-                texts = predict_mps.predict(
+                texts = predict.predict(
                     model, processor, image, prompt_text, args.samples,
                     args.temperature, args.seed, device,
                     max(64, 16 * args.num_fixations + 16),

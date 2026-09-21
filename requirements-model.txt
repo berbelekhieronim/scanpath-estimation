@@ -1,11 +1,23 @@
-# Model inference dependencies — MacBook (Apple Silicon) ONLY.
+# Model inference dependencies — for whichever machine runs the model.
 # Deliberately NOT installed in the Codespace: the web app never imports torch.
 #
 #   python3 -m venv .venv-model
 #   source .venv-model/bin/activate
 #   pip install -r requirements-model.txt
 #
-# Note: no vllm. It requires CUDA, which Apple Silicon does not have.
+# Works on Apple Silicon (MPS) and on NVIDIA (CUDA); the tools pick the
+# device and the numeric format to match. On Linux with an NVIDIA card the
+# default PyPI torch wheel is already the CUDA build, so nothing extra is
+# needed. On Windows, install torch from pytorch.org with the CUDA index URL
+# first, then this file.
+#
+# VRAM: the base model is ~8B parameters, so about 16GB of weights in
+# 16-bit, before activations and the KV cache. Comfortable on a 24GB card,
+# tight-to-impossible on 10-12GB — see `python tools/predict.py --help`
+# and the --max-tiles flag.
+#
+# Note: no vllm. It requires CUDA, and the Apple Silicon path predates the
+# GPU. It would be a reasonable addition for a CUDA-only setup.
 # See docs/SPEC.md section 4.2.
 torch>=2.5.0
 transformers>=4.57.0

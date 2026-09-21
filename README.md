@@ -129,7 +129,7 @@ python tools/gaze_prompts.py --verify ../DeepGaze3.5-VL
 Single image:
 
 ```bash
-python tools/predict_mps.py --repo ../DeepGaze3.5-VL \
+python tools/predict.py --repo ../DeepGaze3.5-VL \
     --image data/images/street.jpg --mode freeview --num-fixations 5
 ```
 
@@ -192,7 +192,7 @@ The adapter was fine-tuned on two exact prompt templates, so those are the
 validated path. You can supply your own text instead:
 
 ```bash
-python tools/predict_mps.py --repo ../DeepGaze3.5-VL --image photo.jpg \
+python tools/predict.py --repo ../DeepGaze3.5-VL --image photo.jpg \
     --prompt "Where would a hurried driver look first? Give 5 points as (x,y)."
 ```
 
@@ -210,7 +210,7 @@ the control the others are compared against.
 
 ## What has not been verified
 
-`tools/predict_mps.py` has never been run against the real model — it was
+`tools/predict.py` has never been run against the real model — it was
 written in an environment with no GPU. Everything downstream of it is verified
 against synthetic data, and the prompt templates are checked byte-for-byte
 against upstream. **Validating the inference path on your MacBook is the first
