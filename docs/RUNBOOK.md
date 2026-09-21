@@ -367,6 +367,11 @@ What follows from it:
 
 - **Do not present a grid finer than 3 × 3.** This is the same constraint as
   before, and this is where it comes from.
+- **Use portrait stimulus images if you can.** A 4:3 image letterboxed into
+  a portrait phone uses 45% of the screen; a portrait one uses 79%, which
+  nearly doubles how finely gaze can be resolved vertically. This is the
+  largest single accuracy lever and it costs nothing but choosing the
+  picture. See `docs/SPEC-METRICS.md` section 10.
 - **Phones must be upright.** The app enforces it: a handset held sideways
   gets a "turn your phone upright" screen until it is. Landscape looked like
   it might help (the picture fills more of the screen) but it costs most of

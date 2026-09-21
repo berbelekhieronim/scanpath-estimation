@@ -19,6 +19,11 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # Taps requested per participant. See spec section 10, decision 3.
 DEFAULT_TAP_COUNT = 5
 
+# How long the picture stays up for the eye-tracked group. Five seconds at
+# roughly 3Hz is about fourteen samples, which makes a usable density map and
+# too few to split into time bins — see SPEC-METRICS section 10.
+DEFAULT_VIEW_MS = 5000
+
 # Presenter routes (/control, /admin) are gated by this token so a participant
 # who guesses the URL cannot wipe data mid-session. Set SCANPATH_CONTROL_TOKEN
 # to pin it; otherwise one is generated on first run and persisted in the

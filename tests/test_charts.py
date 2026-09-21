@@ -762,3 +762,94 @@ def test_a_validation_point_that_disagrees_with_itself_is_not_fitted():
     # Two points can still carry an offset, which beats no correction.
     assert r["gainUsed"] is False
     assert r["offset"][0] == pytest.approx(0.05, abs=0.001)
+
+
+# --- what was applied after the mobile-accuracy review --------------------
+
+def test_calibration_uses_more_of_the_screen_than_it_used_to():
+    """The 15% inset was a desktop heuristic: there a screen corner really is
+    an extreme eye rotation. On a phone the whole screen spans about eleven
+    degrees, so the inset was discarding a fifth of the baseline that the
+    offset and gain corrections are fitted over."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    xs = [float(m) for m in re.findall(r"\[(0\.\d+), 0\.\d+\]", src)]
+    assert min(xs) <= 0.08, "outermost calibration point is still inset"
+    # And the dot shrank, or it would hang off the edge of a narrow phone.
+    page = (STATIC / "calibrate.html").read_text()
+    assert ".target { position: absolute; width: 44px" in page
+
+
+def test_the_shared_kernel_actually_reaches_one_resolution():
+    """Adding the same sigma to everyone preserves the differences it was
+    meant to remove: a laptop at 0.08 and a phone at 0.22 both gain 0.21 and
+    land at 0.22 and 0.30. Errors add in quadrature, so a common resolution
+    means adding sqrt(target^2 - own^2)."""
+    from app import analysis as A
+    import math
+
+    for own in (0.05, 0.08, 0.15, 0.20):
+        add = A.blur_to_reach(0.21, own)
+        assert math.hypot(own, add) == pytest.approx(0.21, abs=1e-6)
+    # Someone already coarser than the target cannot be sharpened, and is
+    # left alone rather than blurred further.
+    assert A.blur_to_reach(0.21, 0.30) == 0.0
+    # Unknown error keeps the old behaviour exactly.
+    assert A.blur_to_reach(0.21, None) == 0.21
+
+
+def test_participants_end_at_one_resolution_instead_of_merely_similar_ones():
+    """The claim the shared kernel is supposed to make, tested against data
+    as it actually arrives — scattered by each participant's own measurement
+    error, rather than as tidy points.
+
+    Adding a flat 0.21 to everybody leaves a precise observer visibly sharper
+    than a coarse one. Adding only what each needs to reach the target makes
+    them agree.
+    """
+    import numpy as np
+    from app import analysis as A
+
+    def centre_mass(own, seed, corrected, k=400):
+        rng = np.random.default_rng(seed)
+        pts = [[min(.99, max(.01, rng.normal(0.5, own))),
+                min(.99, max(.01, rng.normal(0.5, own)))] for _ in range(k)]
+        errs = [own] if corrected else None
+        return A.participant_maps([pts], n=3, sigma=0.21, errors=errs)[0][4]
+
+    owns = (0.04, 0.09, 0.14, 0.19)      # all at or below the target
+    flat = [np.mean([centre_mass(o, s, False) for s in range(8)]) for o in owns]
+    corr = [np.mean([centre_mass(o, s, True) for s in range(8)]) for o in owns]
+
+    spread = lambda a: max(a) - min(a)   # noqa: E731
+    assert spread(flat) > 0.06           # they clearly disagree today
+    assert spread(corr) < 0.02           # and agree once corrected
+    assert spread(corr) < spread(flat) / 3
+
+
+def test_someone_coarser_than_the_target_is_left_alone_not_blurred_further():
+    """A measurement cannot be sharpened after the fact, so the honest thing
+    is to add nothing and let the map be as coarse as the data really is."""
+    from app import analysis as A
+    assert A.blur_to_reach(0.21, 0.30) == 0.0
+
+
+def test_viewing_time_is_a_presenter_setting(client):
+    """Tap count always was. Viewing time was a URL parameter only, so the
+    two groups' effort was controlled in different places and one could not
+    be changed without editing a link."""
+    assert client.get("/api/state").json()["view_ms"] == 5000
+    r = client.post("/api/control/view-ms", json={"ms": 10000}, headers=AUTH)
+    assert r.status_code == 200
+    assert client.get("/api/state").json()["view_ms"] == 10000
+    # Bounded: it is the participant's time, and too short cannot be binned.
+    assert client.post("/api/control/view-ms", json={"ms": 500},
+                       headers=AUTH).status_code == 422
+    assert client.post("/api/control/view-ms", json={"ms": 120000},
+                       headers=AUTH).status_code == 422
+
+
+def test_the_capture_page_takes_its_duration_from_the_server():
+    page = (STATIC / "calibrate.html").read_text()
+    assert "state.view_ms" in page
+    # ?ms= still wins, for rehearsing without changing the session.
+    assert "VIEW_MS_FORCED" in page

@@ -43,6 +43,62 @@ def device_class(dev: dict, viewport_w, viewport_h) -> str:
     return "unknown"
 
 
+def sampling_rate(rows):
+    """How fast gaze actually arrived, per device class.
+
+    Everything temporal rests on this. A fixation lasts 200-300ms, so a rate
+    below about 4Hz means consecutive samples are not consecutive fixations
+    and no amount of analysis recovers them. The number has been quoted from
+    one session; this reads it from every session there is.
+    """
+    if not rows:
+        return
+    by_session: dict = {}
+    for r in rows:
+        by_session.setdefault(r["session_id"], {"t": [], "dev": r["device_json"],
+                                                "vw": r["viewport_w"]})
+        by_session[r["session_id"]]["t"].append(r["t_ms"])
+
+    buckets: dict = {}
+    for sid, d in by_session.items():
+        ts = sorted(d["t"])
+        if len(ts) < 3:
+            continue
+        gaps = [b - a for a, b in zip(ts, ts[1:]) if b > a]
+        if not gaps:
+            continue
+        try:
+            dev = json.loads(d["dev"] or "{}")
+        except Exception:
+            dev = {}
+        cls = device_class(dev, d["vw"], None)
+        b = buckets.setdefault(cls, {"gaps": [], "n": 0, "spans": []})
+        b["gaps"].append(statistics.median(gaps))
+        b["spans"].append((ts[-1] - ts[0]) / 1000.0)
+        b["n"] += 1
+
+    if not buckets:
+        print("Sampling rate: not enough samples recorded yet.\n")
+        return
+
+    print("Sampling rate — how fast gaze actually arrived")
+    print("(a fixation lasts 200-300ms; below ~4Hz consecutive samples are")
+    print(" not consecutive fixations, and nothing recovers them)\n")
+    for cls, b in sorted(buckets.items()):
+        gap = statistics.median(b["gaps"])
+        hz = 1000.0 / gap if gap else 0
+        span = statistics.median(b["spans"])
+        print(f"  {cls:18s} n={b['n']:3d}   {hz:5.2f} Hz   "
+              f"one every {gap:4.0f} ms   {span:.1f}s recorded")
+        per_bin = (hz * span) / 2
+        verdict = ("enough for early-vs-late binning"
+                   if per_bin >= 10 else
+                   f"only {per_bin:.0f} samples per time bin — too few to "
+                   f"split the window")
+        print(f"  {'':18s} {verdict}")
+    print()
+
+
 def summarise(rows, label):
     errs = [r for r in rows if r is not None]
     if not errs:
@@ -63,6 +119,12 @@ def main():
 
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    rate_rows = conn.execute(
+        "SELECT s.session_id, s.t_ms, p.device_json, g.viewport_w "
+        "FROM gaze_samples s "
+        "JOIN gaze_sessions g ON g.id = s.session_id "
+        "JOIN participants p ON p.id = g.participant_id "
+        "ORDER BY s.session_id, s.t_ms").fetchall()
     rows = conn.execute(
         "SELECT g.*, p.device_json FROM gaze_sessions g "
         "JOIN participants p ON p.id = g.participant_id "
@@ -98,6 +160,7 @@ def main():
             b["viewports"].add(f"{r['viewport_w']}x{r['viewport_h']}")
 
     print(f"\n{len(rows)} calibration(s) in {path}\n")
+    sampling_rate(rate_rows)
     print("Calibration error, as a fraction of viewport width")
     print("(lower is better; this is what the tracker measured about itself)\n")
     for cls, b in sorted(buckets.items()):

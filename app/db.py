@@ -573,7 +573,8 @@ def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
     Excluded sessions are left out by default but still counted, because the
     exclusion rate is part of what gets reported (spec 5.1).
     """
-    sql = ("SELECT s.session_id, s.t_ms, s.x, s.y FROM gaze_samples s "
+    sql = ("SELECT s.session_id, s.t_ms, s.x, s.y, g.mean_error, "
+           "g.diagnostics_json FROM gaze_samples s "
            "JOIN gaze_sessions g ON g.id = s.session_id "
            "WHERE g.round_id = ? AND s.on_image = 1")
     if not include_excluded:
@@ -587,12 +588,32 @@ def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
             "SUM(CASE WHEN excluded = 1 THEN 1 ELSE 0 END) AS excluded "
             "FROM gaze_sessions WHERE round_id = ?", (round_id,)).fetchone()
 
+    import json as _json
+
     paths: dict = {}
+    errors: dict = {}
+    intervals: dict = {}
     for r in rows:
-        paths.setdefault(r["session_id"], []).append([r["x"], r["y"]])
-    ordered = list(paths.values())
+        sid = r["session_id"]
+        paths.setdefault(sid, []).append([r["x"], r["y"]])
+        if sid not in errors:
+            # What this participant's own calibration measured about itself,
+            # after correction. The analysis blurs each map only as far as the
+            # common resolution, so a precise session is not dragged down to
+            # the worst one's.
+            try:
+                diag = _json.loads(r["diagnostics_json"] or "{}")
+            except Exception:
+                diag = {}
+            errors[sid] = diag.get("residual_error") or r["mean_error"]
+        intervals.setdefault(sid, []).append(r["t_ms"])
+
+    ordered_ids = list(paths)
+    ordered = [paths[i] for i in ordered_ids]
     return {
         "paths": ordered,
+        "errors": [errors.get(i) for i in ordered_ids],
+        "sample_times": [intervals[i] for i in ordered_ids],
         "points": [p for path in ordered for p in path],
         "contributors": len(ordered),
         "sessions": counts["sessions"] or 0,

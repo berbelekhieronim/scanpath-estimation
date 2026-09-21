@@ -30,6 +30,8 @@ Spec section 7. Three things this module is careful about:
 
 from typing import List, Optional, Sequence
 
+import math
+
 import numpy as np
 
 Path = List[Sequence[float]]      # ordered points, each (x, y) in 0..1
@@ -459,21 +461,56 @@ def _to_coarse(fine: np.ndarray, n: int) -> np.ndarray:
     return out
 
 
+def blur_to_reach(target: float, own_error: Optional[float]) -> float:
+    """How much blur to ADD so a map ends at the common resolution.
+
+    The shared kernel exists so every source is read at one resolution. Adding
+    the same sigma to everybody does not achieve that — it preserves the
+    differences it was meant to remove. A laptop calibration accurate to 0.08
+    and a phone one accurate to 0.22 both gain 0.21 and end at 0.22 and 0.30:
+    still apart, and now both blurrier than intended.
+
+    Errors add in quadrature, so reaching a common target means adding
+    sqrt(target^2 - own^2) — a lot for a precise measurement, nothing for one
+    already coarser than the target. Someone already worse than the target
+    cannot be sharpened, and is left alone rather than blurred further.
+    """
+    if not own_error or own_error <= 0:
+        return target
+    if own_error >= target:
+        return 0.0
+    return math.sqrt(target ** 2 - own_error ** 2)
+
+
 def participant_maps(paths: List[Path], n: int = 3,
-                     sigma: float = SIGMA_DEFAULT) -> np.ndarray:
+                     sigma: float = SIGMA_DEFAULT,
+                     errors: Optional[Sequence[Optional[float]]] = None) -> np.ndarray:
     """One coarse density map per participant, each summing to 1.
 
     Per participant, not pooled. Someone who produced nineteen gaze samples
     must not outweigh someone who produced nine — the unit of observation is
     the person (SPEC-METRICS.md section 1).
+
+    `errors` is each participant's own measured calibration error, when it is
+    known. Given it, each map is blurred only as far as the common resolution
+    rather than by a flat amount, which is what makes "one shared kernel"
+    true instead of merely intended. Without it the behaviour is unchanged.
     """
-    maps = [_to_coarse(_fine_map(p, sigma), n) for p in paths if p]
-    return np.array([m for m in maps if m.sum() > 0]) if maps else np.empty((0, n * n))
+    out = []
+    for i, p in enumerate(paths):
+        if not p:
+            continue
+        own = errors[i] if errors is not None and i < len(errors) else None
+        m = _to_coarse(_fine_map(p, blur_to_reach(sigma, own)), n)
+        if m.sum() > 0:
+            out.append(m)
+    return np.array(out) if out else np.empty((0, n * n))
 
 
-def group_map(paths: List[Path], n: int = 3, sigma: float = SIGMA_DEFAULT) -> dict:
+def group_map(paths: List[Path], n: int = 3, sigma: float = SIGMA_DEFAULT,
+              errors: Optional[Sequence[Optional[float]]] = None) -> dict:
     """Mean density map across participants, with per-cell intervals."""
-    mats = participant_maps(paths, n, sigma)
+    mats = participant_maps(paths, n, sigma, errors)
     if not len(mats):
         return {"cells": [0.0] * (n * n), "ci": [[0.0, 0.0]] * (n * n), "n": 0}
 
@@ -528,7 +565,8 @@ def split_half(paths: List[Path], n: int = 3, sigma: float = SIGMA_DEFAULT,
 
 
 def comparison_maps(sources: dict, n: int = 3,
-                    sigma: float = SIGMA_DEFAULT, seed: int = 0) -> dict:
+                    sigma: float = SIGMA_DEFAULT, seed: int = 0,
+                    errors: Optional[dict] = None) -> dict:
     """Everything the charts need, in one shape.
 
     All sources are smoothed with the SAME kernel, sized to the worst source's
@@ -539,7 +577,8 @@ def comparison_maps(sources: dict, n: int = 3,
     if len(present) < 1:
         return {"ok": False, "reason": "no data yet"}
 
-    maps = {k: group_map(v, n, sigma) for k, v in present.items()}
+    errs = errors or {}
+    maps = {k: group_map(v, n, sigma, errs.get(k)) for k, v in present.items()}
     ceilings = {k: split_half(v, n, sigma, seed) for k, v in present.items()}
 
     pairs = {}

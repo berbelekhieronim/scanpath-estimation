@@ -35,13 +35,13 @@
 
   /* The target. Concentric rings give the eye something precise to land on —
      a plain disc lets gaze drift to its edge. */
-  .target { position: absolute; width: 64px; height: 64px; margin: -32px 0 0 -32px;
+  .target { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px;
             border-radius: 50%; display: grid; place-items: center; z-index: 5;
             transition: left .28s cubic-bezier(.4,0,.2,1), top .28s cubic-bezier(.4,0,.2,1);
             cursor: pointer; }
   .target::before { content: ''; position: absolute; inset: 0; border-radius: 50%;
                     border: 2px solid var(--accent); opacity: .5; }
-  .target::after { content: ''; width: 14px; height: 14px; border-radius: 50%;
+  .target::after { content: ''; width: 12px; height: 12px; border-radius: 50%;
                    background: var(--accent); box-shadow: 0 0 0 4px rgba(91,140,255,.22); }
   .target.validating::before { border-color: var(--ok); }
   .target.validating::after { background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.22); }
@@ -80,6 +80,14 @@
   .overlay h2 { margin: 0 0 10px; font-size: 1.375rem; }
   .overlay p { margin: 0 0 8px; color: var(--muted); max-width: 400px; }
   .overlay .big { font-size: 3rem; line-height: 1; margin-bottom: 14px; }
+
+  /* The small target exists so the outermost calibration points stay on a
+     narrow screen. Anything wider can have the larger ring back, which is an
+     easier thing to fix the eye on. */
+  @media (min-width: 560px) {
+    .target { width: 64px; height: 64px; margin: -32px 0 0 -32px; }
+    .target::after { width: 14px; height: 14px; }
+  }
 
   /* A phone in landscape leaves roughly 290px once the browser's own bars
      are accounted for. Everything here has to survive that. */
@@ -178,8 +186,9 @@
       <div id="ov-body">
         <p><strong>Check your eyes are visible</strong> in the camera preview,
            top right. That matters more than anything else.</p>
-        <p>Hold the phone <strong>upright</strong>, or rest it on the desk —
-           either works, just keep it still.</p>
+        <p>Hold the phone <strong>upright and comfortably close</strong>, or
+           rest it on the desk — either works, just keep it still. Closer is
+           better: it makes the picture bigger in your view.</p>
         <p>A dot will move around. Look at it, then tap it.</p>
       </div>
       <button class="primary" id="ov-btn">Start</button>
@@ -666,7 +675,9 @@ function stopAndLeave() {
  * why eye tracking was never actually reached.
  * ---------------------------------------------------------------- */
 
-const VIEW_MS = Number(params.get('ms')) || 5000;
+/* Set by the presenter, not baked in. ?ms= still wins, for rehearsing. */
+let VIEW_MS = Number(params.get('ms')) || 5000;
+const VIEW_MS_FORCED = !!params.get('ms');
 
 function toImageCoords(s) {
   const r = $('vframe').getBoundingClientRect();
@@ -697,6 +708,7 @@ async function runViewingStage() {
 
   let state;
   try { state = await fetch('/api/state').then((r) => r.json()); } catch { state = null; }
+  if (state && state.view_ms && !VIEW_MS_FORCED) VIEW_MS = state.view_ms;
   if (!state || !state.image) {
     overlay('Nothing to look at yet',
       '<p>The presenter has not chosen an image.</p>', null);

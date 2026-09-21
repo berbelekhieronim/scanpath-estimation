@@ -87,6 +87,20 @@
     </div>
 
     <div class="card section">
+      <h2>Viewing time</h2>
+      <div class="row" style="margin-bottom:8px">
+        <label style="min-width:110px">Picture shown for</label>
+        <select id="view-ms" style="max-width:300px">
+          <option value="5000">5 seconds</option>
+          <option value="8000">8 seconds</option>
+          <option value="10000">10 seconds</option>
+          <option value="15000">15 seconds</option>
+        </select>
+      </div>
+      <div class="sub" id="view-ms-note"></div>
+    </div>
+
+    <div class="card section">
       <h2>Attention grid</h2>
       <div class="row" style="margin-bottom:8px">
         <label style="min-width:110px">Showing</label>
@@ -293,6 +307,19 @@ async function refresh() {
     if (document.activeElement !== $('grid-source')) {
       $('grid-source').value = state.grid_source || 'tapped';
     }
+    if (document.activeElement !== $('view-ms')) {
+      $('view-ms').value = String(state.view_ms || 5000);
+    }
+    /* At roughly 3Hz, samples per half-window is what decides whether the
+       recording can be split into early and late at all. */
+    const secs = (state.view_ms || 5000) / 1000;
+    const perBin = Math.round((secs * 2.8) / 2);
+    $('view-ms-note').innerHTML = `About ${Math.round(secs * 2.8)} gaze samples `
+      + `per person, ${perBin} per half. `
+      + (perBin >= 10
+         ? 'Enough to compare early against late.'
+         : '<strong>Too few to split the window</strong> — raise it if you '
+           + 'want temporal analysis.');
     const c = cond.counts;
     const st = await fetch('/api/status').then((r) => r.json()).catch(() => null);
     const g = st && st.gaze;
@@ -370,6 +397,15 @@ function renderProbeNote(probe) {
 }
 
 $('probe').addEventListener('change', (e) => setModelConfig({ probe: e.target.value }));
+
+$('view-ms').addEventListener('change', async (e) => {
+  try {
+    await api('/api/control/view-ms', {
+      method: 'POST', body: JSON.stringify({ ms: Number(e.target.value) }) });
+    notice(`Viewing time: ${Number(e.target.value) / 1000}s.`, 'ok');
+    await refresh();
+  } catch (err) { notice(err.message, 'err'); }
+});
 
 $('grid-source').addEventListener('change', async (e) => {
   try {

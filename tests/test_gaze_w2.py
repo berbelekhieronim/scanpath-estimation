@@ -64,10 +64,30 @@ def test_validation_points_are_never_calibration_points():
             assert ((v[0] - c[0]) ** 2 + (v[1] - c[1]) ** 2) ** 0.5 > 0.1
 
 
-def test_points_are_inset_from_the_edges():
-    """Gaze at the extreme edge is the worst-estimated part of the range."""
-    for x, y in _points("CALIB_POINTS") + _points("VALIDATION_POINTS"):
-        assert 0.1 <= x <= 0.9 and 0.1 <= y <= 0.9
+# The narrowest phone still in common use, and the target's size on it.
+NARROW_PX, TARGET_PX = 320, 44
+
+
+def test_points_sit_as_close_to_the_edge_as_the_target_allows():
+    """The old 15% inset came from desktop work, where a screen corner really
+    is an extreme eye rotation. On a phone at arm's length the whole screen
+    spans about eleven degrees, so its corners are four degrees off centre —
+    and the inset was discarding a fifth of the baseline that the offset and
+    gain corrections are fitted over.
+
+    What constrains it now is geometry, not the eye: the dot has to stay on
+    screen and stay tappable.
+    """
+    pts = _points("CALIB_POINTS") + _points("VALIDATION_POINTS")
+    margin = (TARGET_PX / 2) / NARROW_PX          # ~0.069
+    for x, y in pts:
+        assert margin <= x <= 1 - margin, (x, "dot would clip off screen")
+        assert margin <= y <= 1 - margin, (y, "dot would clip off screen")
+
+    # And the baseline is actually wider than the old one, or none of this
+    # was worth doing.
+    xs = [x for x, _ in _points("CALIB_POINTS")]
+    assert max(xs) - min(xs) > 0.70
 
 
 def test_calibration_points_clear_the_trackers_proximity_filter():
@@ -241,7 +261,7 @@ def test_instructions_lead_with_eyes_visible_in_the_preview():
     # Either posture still works — held or resting — but it must be upright,
     # because sideways is measurably the worse way to run this.
     assert "rest it on the desk" in flat
-    assert "<strong>upright</strong>" in flat
+    assert "upright and comfortably close</strong>" in flat
 
 
 def test_all_overlay_copy_lives_inside_ov_body():

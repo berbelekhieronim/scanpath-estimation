@@ -7,12 +7,24 @@
  * Coordinates throughout are 0..1 of the viewport, top-left origin.
  */
 
-// 3x3 calibration grid, inset from the edges: gaze at the very corner of a
-// screen is an extreme eye rotation and the worst-estimated part of the range.
+/* 3x3 calibration grid, barely inset from the edges.
+ *
+ * It used to sit at 15-85%, on the usual reasoning that gaze at the very
+ * corner of a screen is an extreme eye rotation and the worst-estimated part
+ * of the range. That reasoning comes from desktop work and does not transfer:
+ * on a phone held at arm's length the whole screen spans about eleven
+ * degrees, so its corners are four degrees off centre. That is not an extreme
+ * rotation by any definition — and the inset was throwing away a fifth of an
+ * already tiny baseline.
+ *
+ * Baseline matters more here than anywhere else, because the offset and gain
+ * corrections are fitted over it: 15-85% gives 7.9 degrees to fit a slope
+ * through, 7-93% gives 9.7. The target shrinks near the edges (see the CSS)
+ * so the dot stays fully on screen. */
 export const CALIB_POINTS = [
-  [0.15, 0.15], [0.50, 0.15], [0.85, 0.15],
-  [0.15, 0.50], [0.50, 0.50], [0.85, 0.50],
-  [0.15, 0.85], [0.50, 0.85], [0.85, 0.85],
+  [0.07, 0.07], [0.50, 0.07], [0.93, 0.07],
+  [0.07, 0.50], [0.50, 0.50], [0.93, 0.50],
+  [0.07, 0.93], [0.50, 0.93], [0.93, 0.93],
 ];
 
 /* Validation points sit between the calibration points, never on them —
@@ -26,7 +38,7 @@ export const CALIB_POINTS = [
  * is not that predictions are shifted but that they huddle toward the middle
  * of the screen, which no offset can fix. */
 export const VALIDATION_POINTS = [
-  [0.32, 0.32], [0.68, 0.68], [0.68, 0.32],
+  [0.27, 0.27], [0.73, 0.73], [0.73, 0.27],
 ];
 
 /* Thresholds in fractions of viewport width.

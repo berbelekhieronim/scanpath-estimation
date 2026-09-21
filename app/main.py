@@ -303,6 +303,7 @@ def api_status(request: Request):
         "server": _server_freshness(),
         "capture_mode": db.get_state("capture_mode", "tap"),
         "grid_source": db.get_state("grid_source", "tapped"),
+        "view_ms": int(db.get_state("view_ms", str(config.DEFAULT_VIEW_MS))),
         "conditions": conditions,
         "gaze": {
             "sessions": gaze["total"],
@@ -342,6 +343,7 @@ def api_state():
         "layers": LAYERS.current(),
         "capture_mode": db.get_state("capture_mode", "tap"),
         "grid_source": db.get_state("grid_source", "tapped"),
+        "view_ms": int(db.get_state("view_ms", str(config.DEFAULT_VIEW_MS))),
     }
 
 
@@ -410,6 +412,27 @@ def api_set_capture_mode(payload: dict, _: str = Depends(require_token)):
                             detail="mode must be tap, gaze or mixed")
     db.set_state("capture_mode", mode)
     return {"mode": mode}
+
+
+class ViewMs(BaseModel):
+    # Bounded because it is the participant's time, and because a window too
+    # short cannot be split into time bins at the rate gaze actually arrives.
+    ms: int = Field(ge=3000, le=20000)
+
+
+@app.post("/api/control/view-ms")
+def api_set_view_ms(payload: ViewMs, _: str = Depends(require_token)):
+    """How long the picture stays on screen for the eye-tracked group.
+
+    Tap count has always been a presenter setting; this was a URL parameter
+    only, so the two groups' effort was controlled in different places and
+    one of them could not be changed at all without editing a link. It also
+    decides whether any temporal analysis is possible: at roughly 3Hz, five
+    seconds is about seven samples per half-window, which is too few to
+    split (SPEC-METRICS section 10).
+    """
+    db.set_state("view_ms", str(payload.ms))
+    return {"view_ms": payload.ms}
 
 
 class GridSource(BaseModel):
@@ -551,6 +574,11 @@ def _condition_paths(round_id: int) -> dict:
 
     gaze = db.round_gaze_points(round_id)
     return {"tap": tap_paths, "gaze": gaze["paths"],
+            # Taps carry no measurement error of their own — a tap is where
+            # the finger landed — so they take the full shared kernel.
+            "tap_errors": [None] * len(tap_paths),
+            "gaze_errors": gaze.get("errors") or [],
+            "gaze_times": gaze.get("sample_times") or [],
             "gaze_excluded": gaze["excluded"]}
 
 
@@ -607,6 +635,8 @@ def api_compare_maps(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT):
         },
         n=max(2, min(5, grid)),
         sigma=max(0.05, min(0.4, sigma)),
+        errors={"tapped": paths["tap_errors"],
+                "measured": paths["gaze_errors"]},
     )
     result["image"] = db.get_image(round_["image_id"])
     result["config"] = cfg

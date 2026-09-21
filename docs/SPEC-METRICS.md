@@ -388,3 +388,80 @@ Also recorded, because the demo rests on it: the two human groups are
 **different people**, and the caption says so whenever both are on screen. Two
 clouds on one picture otherwise read as before-and-after for one person, which
 is the one thing they are not.
+
+
+---
+
+## 10. Mobile accuracy, and what was done about it (2026-09-21)
+
+The tracker's error is angular and roughly fixed at a couple of degrees.
+That is simply what browser webcam gaze is, and chasing it is not where the
+leverage is. The leverage is that **error in degrees is fixed, so anything
+that makes the picture bigger in the eye is a direct accuracy multiplier.**
+
+Measured, on an iPhone 12 mini in portrait:
+
+| stimulus | screen used | resolvable |
+|---|---|---|
+| 4:3 letterboxed @30cm (today) | 45% | 4.5 x 3.4 cells |
+| 4:3 letterboxed @20cm | 45% | 6.8 x 5.1 |
+| 3:4 portrait crop @30cm | 79% | 4.5 x 6.0 |
+| 3:4 portrait crop @20cm | 79% | 6.8 x 9.0 |
+
+A 3x3 grid needs 3x3. The current setup sits at 4.5 x 3.4 — above the floor
+with almost no margin, which is why 3x3 is the limit and a finer grid would
+be fiction.
+
+**Over half the phone screen is black bars.** A 4:3 image letterboxed into a
+portrait phone uses 45% of it. This is the single biggest thing being given
+away, and the fix is a study-design decision rather than a code change:
+**use portrait stimuli**. Cropping existing landscape images would work
+equally well geometrically but risks cropping out the thing the study is
+about, so it is not done automatically.
+
+### Applied
+
+**The calibration inset was a desktop heuristic.** Points sat at 15-85%, on
+the reasoning that a screen corner is an extreme eye rotation and the
+worst-estimated part of the range. That is true on a desktop. On a phone the
+whole screen spans about eleven degrees, so its corners are four degrees off
+centre — not extreme by any definition — and the inset was discarding a
+fifth of the baseline that the offset and gain corrections are fitted over.
+Points now sit at 7-93%, which widens the baseline from 7.9 to 9.7 degrees.
+What constrains it now is the dot staying on a narrow screen, so the target
+shrinks to 44px below 560px wide and the test pins that geometry rather than
+the old rule of thumb.
+
+**The shared kernel was not shared.** Section 2 says every source is smoothed
+with one kernel so all are read at one resolution. The implementation added
+the same sigma to everyone, which preserves exactly the differences it was
+meant to remove: a laptop participant measured to 0.08 and a phone one at
+0.22 both gained 0.21 and ended at 0.22 and 0.30. Errors add in quadrature,
+so reaching a common resolution means adding sqrt(target^2 - own^2) — nearly
+the full amount for a precise measurement, nothing for one already coarser
+than the target. Across simulated observers at or below the target this cuts
+the spread in their maps by 98%. Someone genuinely coarser than the target
+cannot be sharpened and is left alone.
+
+Each gaze session's own residual error now travels with its path, so this
+uses data already being collected. Taps carry no measurement error of their
+own and take the full kernel, exactly as before.
+
+**Viewing time is a presenter setting.** It was a URL parameter only, so tap
+count and viewing time were controlled in different places and one of them
+could not be changed without editing a link. Controls now show what a given
+duration buys: at roughly 3Hz, five seconds is about seven samples per
+half-window, which the panel says plainly is too few to split.
+
+### Not applied, and why
+
+- **Filling the screen** needs either portrait stimuli (a study-design
+  choice) or a crop with correct coordinate mapping back to full-image
+  space, since gaze and taps must stay in one coordinate system. Worth
+  doing; not worth doing silently.
+- **Head-pose rejection** — the landmarks are there and a sample taken with
+  the head somewhere else is not measuring what the calibration describes.
+- **A post-viewing drift check** — one extra tap measures how much the
+  calibration decayed across the window.
+- **Raising the frame rate** via the WebGL backend. This is what crashed iOS
+  tabs, and a crashed participant mid-session is the worst failure available.
