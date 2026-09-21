@@ -104,6 +104,8 @@ def init_db() -> None:
     init_gaze()
     init_gaze_samples()
     init_assignments()
+    # After init_assignments, which creates the table this migrates.
+    init_assignments_forced()
     _ensure_device_column()
 
 
@@ -632,7 +634,11 @@ CREATE TABLE IF NOT EXISTS assignments (
     participant_id INTEGER NOT NULL REFERENCES participants(id),
     condition      TEXT    NOT NULL,          -- 'tap' | 'gaze'
     assigned_at    TEXT    NOT NULL,
-    completed      INTEGER NOT NULL DEFAULT 0
+    completed      INTEGER NOT NULL DEFAULT 0,
+    -- Set when the condition came from a direct join link rather than the
+    -- balancer. A forced assignment is somebody testing, and it must be
+    -- possible to tell those apart from the balanced ones afterwards.
+    forced         INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_assignment_unique
     ON assignments(round_id, participant_id);
@@ -650,18 +656,31 @@ def assignment_counts(round_id: int) -> dict:
     with connect() as conn:
         rows = conn.execute(
             "SELECT condition, COUNT(*) AS assigned, "
-            "SUM(completed) AS completed FROM assignments "
-            "WHERE round_id = ? GROUP BY condition", (round_id,)
-        ).fetchall()
-    out = {c: {"assigned": 0, "completed": 0} for c in CONDITIONS}
+            "SUM(completed) AS completed, SUM(forced) AS forced "
+            "FROM assignments WHERE round_id = ? GROUP BY condition",
+            (round_id,)).fetchall()
+    out = {c: {"assigned": 0, "completed": 0, "forced": 0} for c in CONDITIONS}
     for r in rows:
         if r["condition"] in out:
             out[r["condition"]] = {"assigned": r["assigned"],
-                                   "completed": r["completed"] or 0}
+                                   "completed": r["completed"] or 0,
+                                   "forced": r["forced"] or 0}
     return out
 
 
-def assign_condition(round_id: int, participant_id: int, mode: str) -> dict:
+def init_assignments_forced() -> None:
+    """Older databases predate the forced column."""
+    with connect() as conn:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(assignments)")}
+        if not cols:
+            return          # table not created yet; the schema carries it
+        if "forced" not in cols:
+            conn.execute("ALTER TABLE assignments ADD COLUMN forced "
+                         "INTEGER NOT NULL DEFAULT 0")
+
+
+def assign_condition(round_id: int, participant_id: int, mode: str,
+                     force: Optional[str] = None) -> dict:
     """Assign, or return an existing assignment for this round.
 
     In mixed mode the choice balances on **completed** responses first, not
@@ -678,9 +697,15 @@ def assign_condition(round_id: int, participant_id: int, mode: str) -> dict:
             (round_id, participant_id)).fetchone()
         if row:
             return {"condition": row["condition"], "new": False,
-                    "completed": bool(row["completed"])}
+                    "completed": bool(row["completed"]),
+                    "forced": bool(row["forced"])}
 
-    if mode in CONDITIONS:
+    if force in CONDITIONS:
+        # A direct join link. Recorded as forced so the balance can be read
+        # honestly later — these are tests, not participants the balancer
+        # chose.
+        condition = force
+    elif mode in CONDITIONS:
         condition = mode
     else:
         counts = assignment_counts(round_id)
@@ -695,12 +720,16 @@ def assign_condition(round_id: int, participant_id: int, mode: str) -> dict:
     with connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO assignments "
-            "(round_id, participant_id, condition, assigned_at) VALUES (?, ?, ?, ?)",
-            (round_id, participant_id, condition, utcnow()))
+            "(round_id, participant_id, condition, assigned_at, forced) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (round_id, participant_id, condition, utcnow(),
+             1 if force in CONDITIONS else 0))
         got = conn.execute(
-            "SELECT condition FROM assignments WHERE round_id = ? AND participant_id = ?",
+            "SELECT condition, forced FROM assignments "
+            "WHERE round_id = ? AND participant_id = ?",
             (round_id, participant_id)).fetchone()
-    return {"condition": got["condition"], "new": True, "completed": False}
+    return {"condition": got["condition"], "new": True, "completed": False,
+            "forced": bool(got["forced"])}
 
 
 def mark_completed(round_id: int, participant_id: int) -> None:

@@ -60,6 +60,29 @@
   .link.locked { opacity: .55; }
   .link.locked .pth { color: var(--warn); }
 
+  .qrs { display: grid; gap: 14px;
+         grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .qrcard {
+    display: flex; gap: 14px; align-items: center;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px;
+  }
+  /* White plate behind the code: a QR needs light quiet zones to scan, and
+     the page is dark by default. */
+  .qrimg {
+    width: 108px; height: 108px; flex: 0 0 auto; border-radius: 8px;
+    background: #fff; padding: 7px;
+  }
+  .qrmeta { min-width: 0; }
+  .qrmeta .nm { font-weight: 600; margin-bottom: 3px; }
+  .qrmeta .ds { color: var(--muted); font-size: 0.8125rem; margin-bottom: 6px; }
+  .qrmeta .pth {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.75rem; color: var(--accent); text-decoration: none;
+    word-break: break-all;
+  }
+  .qrmeta .pth:hover { text-decoration: underline; }
+
   .join { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           font-size: 0.875rem; word-break: break-all; }
   details summary { cursor: pointer; color: var(--muted); font-size: 0.875rem; }
@@ -87,14 +110,12 @@
     </div>
   </div>
 
-  <h2 class="sec">Run the session</h2>
-  <div class="links" id="main-links"></div>
-
-  <h2 class="sec">Participants see</h2>
-  <div class="links" id="participant-links"></div>
-
-  <h2 class="sec">Data</h2>
-  <div class="links" id="data-links"></div>
+  <h2 class="sec">Join codes</h2>
+  <p class="sub" style="margin:-4px 0 12px">Each forgets the phone's previous
+     identity, so the same handset can rehearse both arms. A code names its
+     condition instead of asking the balancer, and those assignments are
+     recorded as forced so a rehearsal is never counted as a participant.</p>
+  <div class="qrs" id="qrs"></div>
 
   <h2 class="sec">Diagnostics</h2>
   <details>
@@ -120,27 +141,43 @@ let token = localStorage.getItem(TOKEN_KEY) ||
 /* Grouped by what you are doing, not by what exists. The presenter needs two
    pages during a session; everything else is setup or diagnosis, and burying
    those is the point of the grouping. */
+/* The top nav reaches every page, so the tiles that duplicated it are gone.
+   What is left here is what a nav bar cannot do: scannable codes, the join
+   address, the readiness checks, and the tools you only want when something
+   is wrong. */
 const GROUPS = {
-  'main-links': [
-    { path: '/control', nm: 'Controls', ds: 'Layers, capture mode, image, model', locked: true },
-    { path: '/display', nm: 'Display', ds: 'The projected screen' },
-  ],
-  'participant-links': [
-    { path: '/qr', nm: 'Join screen', ds: 'QR code to project while people arrive' },
-    { path: '/', nm: 'Participant view', ds: 'Routes each person to tapping or the camera' },
-    { path: '/?newid=1', nm: 'Participant view, fresh id', ds: 'Forget this device and be assigned again — for testing' },
-  ],
-  'data-links': [
-    { path: '/charts', nm: 'Comparison charts', ds: 'Tapped vs measured vs model, with intervals and a table' },
-    { path: '/api/export', nm: 'Download JSON', ds: 'Everything: taps, gaze, calibration, device info', locked: true, raw: true },
-    { path: '/admin', nm: 'Images', ds: 'Rescan the folder, choose the active image', locked: true },
-  ],
   'diag-links': [
     { path: '/gazetest', nm: 'Gaze tracking test', ds: 'Does the camera work on this device and network?' },
     { path: '/calibrate?mock=1', nm: 'Rehearse calibration', ds: 'The full flow with no camera' },
+    { path: '/api/export', nm: 'Download JSON', ds: 'Everything: taps, gaze, calibration, device info', locked: true, raw: true },
     { path: '/api/raw', nm: 'Raw state', ds: 'What the display is drawn from', raw: true },
   ],
 };
+
+/* Three ways in. The balanced one is what the room scans; the other two name
+   a condition so one phone can rehearse either arm without waiting for the
+   balancer to offer it. All three forget the device's previous identity. */
+const JOIN_CODES = [
+  { path: '/?newid=1', nm: 'Balanced',
+    ds: 'What the room scans. The server decides which arm, keeping the two even.' },
+  { path: '/?newid=1&as=tap', nm: 'Tap only',
+    ds: 'Straight to tapping. Recorded as a forced assignment.' },
+  { path: '/?newid=1&as=gaze', nm: 'Eye tracking only',
+    ds: 'Straight to consent and calibration. Recorded as a forced assignment.' },
+];
+
+function renderJoinCodes() {
+  $('qrs').innerHTML = JOIN_CODES.map((c) => `
+    <div class="qrcard">
+      <img class="qrimg" alt="QR code for ${c.nm}"
+           src="/api/qr.svg?path=${encodeURIComponent(c.path)}">
+      <div class="qrmeta">
+        <div class="nm">${c.nm}</div>
+        <div class="ds">${c.ds}</div>
+        <a class="pth" href="${c.path}" target="_blank" rel="noopener">${c.path}</a>
+      </div>
+    </div>`).join('');
+}
 
 function renderLinks() {
   for (const [id, items] of Object.entries(GROUPS)) {
@@ -214,7 +251,7 @@ async function refresh() {
 function renderToken() {
   const have = !!token;
   $('token-msg').textContent = have
-    ? 'Token stored in this browser — the locked links below will open directly.'
+    ? 'Token stored in this browser — Controls, Images and the data export open directly.'
     : 'Paste the control token to unlock the presenter pages. It is printed in the server console at startup.';
   $('forget').style.display = have ? '' : 'none';
   $('token').value = '';
@@ -225,6 +262,7 @@ $('save').addEventListener('click', () => {
   if (!v) return;
   token = v; localStorage.setItem(TOKEN_KEY, token);
   renderToken(); renderLinks();
+  renderJoinCodes();
 });
 $('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save').click(); });
 $('forget').addEventListener('click', () => {
@@ -232,7 +270,7 @@ $('forget').addEventListener('click', () => {
 });
 
 if (token) localStorage.setItem(TOKEN_KEY, token);
-renderToken(); renderLinks(); refresh();
+renderToken(); renderLinks(); renderJoinCodes(); refresh();
 setInterval(refresh, 3000);
 </script>
 </body>

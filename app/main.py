@@ -375,6 +375,16 @@ def _safe_prompt(mode: str, n: int, target):
 
 class Assignment(BaseModel):
     participant_uuid: str = Field(min_length=8, max_length=64)
+    # Set by a direct join link, which skips the balancer on purpose. Stored
+    # as forced so a rehearsal is never mistaken for a balanced participant.
+    force: Optional[str] = None
+
+    @field_validator("force")
+    @classmethod
+    def known_condition(cls, v):
+        if v is not None and v not in ("tap", "gaze"):
+            raise ValueError("force must be tap or gaze")
+        return v
 
 
 @app.post("/api/assign")
@@ -391,7 +401,8 @@ def api_assign(payload: Assignment, request: Request):
     participant_id = db.upsert_participant(
         payload.participant_uuid, request.headers.get("user-agent"))
     mode = db.get_state("capture_mode", "tap")
-    result = db.assign_condition(round_["id"], participant_id, mode)
+    result = db.assign_condition(round_["id"], participant_id, mode,
+                                 force=payload.force)
     return {**result, "mode": mode,
             "counts": db.assignment_counts(round_["id"])}
 
@@ -851,11 +862,24 @@ def api_join_url(request: Request):
 
 
 @app.get("/api/qr.svg", include_in_schema=False)
-def api_qr(request: Request):
+def api_qr(request: Request, path: str = ""):
+    """The join QR, optionally for a specific entry point.
+
+    `path` lets the start page publish a tap-only and a track-only code
+    alongside the balanced one, for rehearsing either arm without having to
+    wait for the balancer to hand you the one you wanted. Restricted to a
+    relative path so this cannot be turned into a generator of QR codes
+    pointing anywhere.
+    """
     import qrcode
     import qrcode.image.svg
 
     url = urls.public_base_url(request.base_url)["url"]
+    if path:
+        if not path.startswith("/") or path.startswith("//") or ":" in path:
+            raise HTTPException(status_code=400,
+                                detail="path must be a relative path")
+        url = url.rstrip("/") + path
     img = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2)
     buf = io.BytesIO()
     img.save(buf)

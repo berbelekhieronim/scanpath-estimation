@@ -234,9 +234,13 @@ async function submit() {
 async function routeByCondition() {
   let a;
   try {
+    const forced = new URLSearchParams(location.search).get('as');
     a = await fetch('/api/assign', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ participant_uuid: participantUuid() }),
+      body: JSON.stringify({
+        participant_uuid: participantUuid(),
+        ...(forced === 'tap' || forced === 'gaze' ? { force: forced } : {}),
+      }),
     }).then((r) => (r.ok ? r.json() : null));
   } catch { return false; }
   if (!a || a.completed) return false;

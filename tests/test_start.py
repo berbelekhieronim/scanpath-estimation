@@ -5,6 +5,8 @@ import json
 import tempfile
 from pathlib import Path
 
+STATIC = Path(__file__).resolve().parent.parent / "app" / "static"
+
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -140,3 +142,59 @@ def test_start_page_warns_about_a_stale_server():
            / "app" / "static" / "start.html").read_text()
     assert "running older code" in src
     assert "devserver.sh restart" in src
+
+
+def test_the_start_page_stopped_duplicating_the_nav():
+    """Every tile pointed at a page the top nav already reaches. What is left
+    is what a nav bar cannot do."""
+    page = (STATIC / "start.html").read_text()
+    for gone in ("'main-links'", "'participant-links'", "'data-links'"):
+        assert gone not in page, gone
+    assert "'diag-links'" in page
+    assert 'id="nav"' in page
+
+
+def test_join_codes_cover_both_arms_and_always_reset_the_device():
+    """One handset has to be able to rehearse either arm, and it cannot do
+    that while it still holds the identity from the last run."""
+    page = (STATIC / "start.html").read_text()
+    for path in ("/?newid=1", "/?newid=1&as=tap", "/?newid=1&as=gaze"):
+        assert path in page, path
+    assert page.count("newid=1") >= 3
+
+
+def test_a_join_code_can_only_point_back_at_this_server(env):
+    """Otherwise it is a service for generating QR codes to anywhere."""
+    with start(with_image(env)) as client:
+        assert client.get("/api/qr.svg",
+                          params={"path": "/?newid=1"}).status_code == 200
+        for bad in ("https://evil.example", "//evil.example",
+                    "javascript:alert(1)"):
+            assert client.get("/api/qr.svg",
+                              params={"path": bad}).status_code == 400, bad
+
+
+def test_a_forced_assignment_is_recorded_as_forced(env):
+    """A code that names its condition skips the balancer. Those are
+    rehearsals, and the balance has to be readable afterwards without them
+    being mistaken for participants the balancer chose."""
+    # The lifespan builds the schema, so the client has to be entered.
+    with start(with_image(env)) as client:
+        r = client.post("/api/assign",
+                        json={"participant_uuid": "rehearse-0001",
+                              "force": "gaze"}).json()
+        assert r["condition"] == "gaze"
+        assert r["forced"] is True
+
+        counts = client.get("/api/conditions").json()["counts"]
+        assert counts["gaze"]["forced"] == 1
+        assert counts["tap"]["forced"] == 0
+
+        # A normal join is not marked.
+        n = client.post("/api/assign",
+                        json={"participant_uuid": "ordinary-0001"}).json()
+        assert n["forced"] is False
+        # An unknown condition is refused rather than silently ignored.
+        assert client.post(
+            "/api/assign", json={"participant_uuid": "bad-00001",
+                                 "force": "elsewhere"}).status_code == 422
