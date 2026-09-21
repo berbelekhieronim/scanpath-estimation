@@ -465,3 +465,48 @@ half-window, which the panel says plainly is too few to split.
   calibration decayed across the window.
 - **Raising the frame rate** via the WebGL backend. This is what crashed iOS
   tabs, and a crashed participant mid-session is the worst failure available.
+
+
+---
+
+## 11. The comparison that was missing (2026-09-21)
+
+Three pairs exist — tapped against measured, tapped against model, measured
+against model — and only the first had a picture. The third is the one the
+project is for: *does the model predict where people actually looked?* It had
+a correlation and nothing else, and a correlation says how much two sources
+disagree while never saying where.
+
+**Every pair now gets a difference map.** `comparison_maps` returns
+`differences` keyed by pair, with the sign convention that the second named
+source minus the first. The old single `difference` key still resolves to
+tapped-vs-measured so nothing reading it broke.
+
+**The dot plot became a correlation matrix.** Nine rows of three overlapping
+interval bars was correct and unreadable; the question people actually bring
+to it is "do these two agree", and a matrix answers that in one glance. The
+diagonal carries each source's agreement with itself, which is the number
+that makes the rest meaningful — and it is deliberately *not* coloured on the
+same diverging scale, because it is a different quantity and filling it would
+invite reading it as the best correlation on the grid.
+
+**The agreement panel left the projected screen.** It crowded the picture it
+was meant to explain. `/charts` can lay the same numbers out properly, and
+the layer is removed rather than merely defaulted off. `/api/analysis`
+survives: it still feeds the raw-data view and is still where the
+tapped-vs-model figures are computed.
+
+### The interpretation block
+
+The page now states a conclusion in words, which makes it the part most able
+to overstate one. Every sentence is derived from what is on screen and
+carries the caveat that qualifies it — a thin group, a synthetic model run, a
+missing ceiling. Agreement bands are deliberately coarse (closely /
+moderately / loosely / barely at all) because the underlying number does not
+support finer language at these sample sizes.
+
+The sentence that matters most is the last: **what a plain centre blob scores
+against the model's own map.** At 0.80 or above it says plainly that the
+model is largely reproducing centre bias and that "it predicts where people
+look" is close to "people look at the middle". That threshold started at 0.85
+and was lowered after a test run scored 0.84 and got congratulated for it.

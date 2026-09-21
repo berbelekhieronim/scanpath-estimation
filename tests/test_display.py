@@ -71,7 +71,7 @@ def test_default_layers(client):
     """Only the human heatmap starts on; every reveal is a deliberate act."""
     layers = client.get("/api/state").json()["layers"]
     assert layers == {"heatmap": True, "paths": False, "model": False,
-                      "analysis": False, "prompt": False, "json": False,
+                      "prompt": False, "json": False,
                       "gaze": False, "gaze_paths": False, "charts": False,
                       "grid": False}
 

@@ -97,7 +97,9 @@ def require_token(
 class LAYERS:
     """Layer visibility. 'Clear' hides a layer; it never deletes data."""
 
-    KEYS = {"heatmap": "1", "paths": "0", "model": "0", "analysis": "0",
+    # "analysis" is gone: the agreement figures moved to /charts, where they
+    # can be laid out and read, instead of crowding the projected picture.
+    KEYS = {"heatmap": "1", "paths": "0", "model": "0",
             "prompt": "0", "json": "0", "gaze": "0", "gaze_paths": "0",
             "charts": "0", "grid": "0"}
 

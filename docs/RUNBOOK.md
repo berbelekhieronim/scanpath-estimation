@@ -241,11 +241,19 @@ caption on screen says it, but an audience hears it better than it reads it.
 
 ---
 
-## 5. Reading the analysis panel
+## 5. Reading the agreement figures
 
-**This panel is the tap group vs the model. Measured gaze is not in it.** It
-is computed from taps, and always has been. The panel says so on screen. For
-all three sources together, use the charts in section 5b.
+**These live on `/charts` now, not on the projected screen.** The agreement
+panel crowded the picture it was meant to explain, so the display layer is
+gone and the numbers moved somewhere they can be laid out.
+
+`/charts` opens with **What this says** — the figures read out in words, with
+the caveats attached — then the correlation matrix, then a difference map for
+every pair. The matrix diagonal is each source against itself; that is the
+ceiling, and the percentages beside the other cells are measured against it.
+
+`/api/analysis` still exists and still appears in the raw-data view. It is
+the tap group against the model only, and always was.
 
 The headline compares the model against the **tap-group-to-itself ceiling**,
 not against perfection — neither side is ground truth, so "as well as those

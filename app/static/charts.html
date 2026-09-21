@@ -37,6 +37,11 @@
   <div id="banners"></div>
   <div id="legend"></div>
 
+  <section id="read-section">
+    <h2>What this says</h2>
+    <div class="wide" id="read"></div>
+  </section>
+
   <section>
     <h2>Where each group looked</h2>
     <p class="lede">Each panel is one group's attention spread over a
@@ -49,30 +54,21 @@
     <div id="panel-scale"></div>
   </section>
 
+  <section>
+    <h2>How closely they agree</h2>
+    <p class="lede">Every pair at once. The diagonal is each source against
+      <em>itself</em>, split in half — no pair can be expected to beat that,
+      so it is the number the rest are read against.</p>
+    <div class="wide" id="matrix"></div>
+  </section>
+
   <section id="diff-section">
-    <h2>Where the two human groups differ</h2>
-    <p class="lede">Measured gaze minus tapped guesses, cell by cell. Red means
-      people actually looked there more than they said they would; blue means
-      they said it more than they looked.</p>
+    <h2>Where they differ</h2>
+    <p class="lede">A correlation says how much two sources disagree. These say
+      <em>where</em>. Each cell is the second source's share of attention minus
+      the first's: red means the second looked there more, blue means the
+      first did.</p>
     <div class="wide" id="diff"></div>
-  </section>
-
-  <section>
-    <h2>Attention per cell, with uncertainty</h2>
-    <p class="lede">The same numbers as a dot plot. The line through each dot
-      is a 95% interval across participants: where the intervals for two
-      groups do not overlap, the difference is unlikely to be noise. Wide bars
-      mean few people, not a strong finding.</p>
-    <div class="wide" id="dots"></div>
-  </section>
-
-  <section>
-    <h2>How closely the maps agree</h2>
-    <p class="lede">Correlation between each pair of maps, judged against a
-      ceiling: how well a group agrees with <em>itself</em> when split in half.
-      No pair can be expected to beat that, so the percentage of the ceiling is
-      the honest figure.</p>
-    <div class="wide" id="agree"></div>
   </section>
 
   <section>
@@ -85,8 +81,8 @@
 
 <script type="module">
 import {
-  SERIES, densityPanels, sequentialScale, differenceMap, dotPlot,
-  agreementTable, numbersTable, legendRow, esc, MORE_IS,
+  SERIES, densityPanels, sequentialScale, differenceMap, correlationMatrix,
+  numbersTable, legendRow, interpretation, esc, MORE_IS,
 } from '/static/charts.js';
 import { renderNav } from '/static/nav.js';
 
@@ -180,11 +176,27 @@ async function load() {
 
   put('panels', densityPanels(d, {aspect, image: scene}));
   put('panel-scale', sequentialScale());
-  const diff = differenceMap(d, {image: scene, aspect});
-  $('diff-section').hidden = !diff;
-  put('diff', diff);
-  put('dots', dotPlot(d));
-  put('agree', agreementTable(d));
+  put('read', interpretation(d));
+  put('matrix', correlationMatrix(d));
+
+  // One map per pair. The measured-against-model one is the comparison the
+  // project exists for and had no picture until now.
+  const host = $('diff');
+  host.textContent = '';
+  let any = false;
+  for (const key of Object.keys(d.differences || {})) {
+    const map = differenceMap(d, {image: scene, aspect, pair: key, key: false});
+    if (!map) continue;
+    any = true;
+    const [a, b] = key.split('|');
+    const label = (k) => (SERIES.find((s) => s.key === k) || {label: k}).label;
+    const block = document.createElement('div');
+    block.className = 'diff-block';
+    block.innerHTML = `<h3>${esc(label(b))} minus ${esc(label(a))}</h3>`;
+    block.appendChild(map);
+    host.appendChild(block);
+  }
+  $('diff-section').hidden = !any;
   put('table', numbersTable(d));
 }
 

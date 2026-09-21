@@ -587,7 +587,7 @@ def test_every_chart_grid_sits_over_the_scene():
     as an abstract square."""
     page = (STATIC / "charts.html").read_text()
     assert "densityPanels(d, {aspect, image: scene})" in page
-    assert "differenceMap(d, {image: scene, aspect})" in page
+    assert "image: scene, aspect, pair: key" in page
 
 
 def test_the_grid_source_is_switchable_and_validated(client):
@@ -853,3 +853,73 @@ def test_the_capture_page_takes_its_duration_from_the_server():
     assert "state.view_ms" in page
     # ?ms= still wins, for rehearsing without changing the session.
     assert "VIEW_MS_FORCED" in page
+
+
+def test_every_pair_gets_a_difference_map_not_just_the_human_one():
+    """A correlation says how much two sources disagree and never where.
+    Measured against model is the comparison the project exists for, and it
+    had only a number."""
+    from app import analysis as A
+    TL, BR, C = [[0.12, 0.12]] * 4, [[0.88, 0.88]] * 4, [[0.5, 0.5]] * 4
+    out = A.comparison_maps({"tapped": [TL] * 5, "measured": [BR] * 5,
+                             "model": [C] * 5})
+    assert set(out["differences"]) == {"tapped|measured", "tapped|model",
+                                       "measured|model"}
+    # The legacy single map still resolves, so nothing reading it breaks.
+    assert out["difference"] == out["differences"]["tapped|measured"]
+    # Sign convention: the second named source minus the first.
+    assert out["differences"]["measured|model"][4] > 0      # model is centred
+
+
+def test_the_dot_plot_gave_way_to_a_correlation_matrix():
+    """Nine rows times three series of overlapping intervals was correct and
+    unreadable. A matrix answers "do these agree" in one glance."""
+    page = (STATIC / "charts.html").read_text()
+    assert "correlationMatrix" in page
+    assert "dotPlot" not in page
+    module = (STATIC / "charts.js").read_text()
+    assert "export function correlationMatrix" in module
+
+
+def test_the_matrix_diagonal_is_not_coloured_like_a_pair_score():
+    """It is a ceiling, a different quantity. Dropping it into the same
+    diverging scale would invite reading it as the best correlation."""
+    module = (STATIC / "charts.js").read_text()
+    assert "if (!self) td.style.background = divColour(v, 1);" in module
+    css = (STATIC / "charts.css").read_text()
+    assert ".chart-table.matrix td.cc.self" in css and "background: none" in css
+
+
+def test_the_interpretation_says_when_it_cannot_be_trusted():
+    """It is the one part of the page that states a conclusion, so it is the
+    part most able to overstate one."""
+    module = (STATIC / "charts.js").read_text()
+    assert "export function interpretation" in module
+    for caveat in ("synthetic", "fewer than six people",
+                   "too few people for a ceiling"):
+        assert caveat in module, caveat
+    # And it names the comparison that decides whether any of it means
+    # anything: the model against a plain centre blob.
+    assert "centre bias" in module
+
+
+def test_the_agreement_panel_left_the_projected_screen(client):
+    """It crowded the picture it was meant to explain, and /charts can lay
+    the same numbers out properly. The layer is gone, not hidden."""
+    assert "analysis" not in client.get("/api/state").json()["layers"]
+    r = client.post("/api/control/layers", json={"analysis": True},
+                    headers=AUTH)
+    assert r.status_code == 400
+
+    page = (STATIC / "display.html").read_text()
+    assert "renderAnalysis" not in page
+    assert 'id="analysis"' not in page
+    # And the control page no longer offers a switch for it.
+    assert "Agreement metrics" not in (STATIC / "control.html").read_text()
+
+
+def test_the_analysis_endpoint_survives_for_the_raw_view(client):
+    """/api/raw still publishes it, and it is the one place the tapped-vs-
+    model figures are computed. Removing the layer is a display decision."""
+    assert client.get("/api/analysis").status_code == 200
+    assert "analysis" in client.get("/api/raw").json()

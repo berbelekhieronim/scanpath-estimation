@@ -32,7 +32,6 @@
 
   <div class="explain" id="explain"></div>
   <div class="prompt-panel" id="prompt-panel" hidden></div>
-  <div class="analysis" id="analysis" hidden></div>
   <div class="legend" id="legend"></div>
 
 </div>
@@ -327,7 +326,6 @@ function renderPrompt(cfg, run, show) {
 const JSON_TABS = [
   ['model', 'Model run'],
   ['markers', 'Human taps'],
-  ['analysis', 'Agreement'],
   ['state', 'Display state'],
 ];
 let jsonTab = 'model';
@@ -475,104 +473,6 @@ async function renderCharts(show) {
   el.appendChild(foot);
 }
 
-function fmt(v, digits = 2) {
-  return (v === null || v === undefined) ? '—' : Number(v).toFixed(digits);
-}
-
-function renderAnalysis(a, show) {
-  const el = $('analysis');
-  if (!show) { el.hidden = true; return; }
-  el.hidden = false;
-
-  if (!a || !a.ok) {
-    el.innerHTML = `<div class="headline unavailable">Agreement unavailable —
-      ${a && a.reason ? a.reason : 'not enough data yet'}.</div>`;
-    return;
-  }
-
-  /* Say which two things this compares, before saying how well they agree.
-     These numbers are the TAP group against the model; the measured group is
-     not in them. Unlabelled, "agreement" beside a screen showing two human
-     layers reads as whichever one the viewer had in mind. */
-  const cmp = a.compares || {a: 'tapped', b: 'model', excludes: 'measured'};
-  const scope = `<div class="scope">
-    <span class="kn"><span class="dot tap"></span>Tapped</span>
-    <span class="vs">vs</span>
-    <span class="kn"><span class="dot model"></span>Model</span>
-    <span class="excl">measured gaze is <strong>not</strong> in these numbers —
-      turn on Comparison charts for all three</span>
-  </div>`;
-
-  const mv = a.model_vs_human, ce = a.human_ceiling, bl = a.baselines;
-  const ceilingOk = ce && !ce.unavailable && ce.spearman;
-
-  // The headline compares the model against the human-to-human ceiling, not
-  // against perfection. "As well as people agree with each other" is the
-  // honest claim; "correct" is not, since neither side is ground truth.
-  let headline;
-  if (mv.spearman !== null && mv.spearman <= 0) {
-    // A ratio against the ceiling would render as a negative percentage,
-    // which reads as a bug rather than as the finding it is.
-    headline = `The model and the tap group <strong>do not agree</strong> on
-      this image — no better than chance.`;
-  } else if (ceilingOk && mv.spearman !== null && ce.spearman > 0) {
-    const pct = Math.round((mv.spearman / ce.spearman) * 100);
-    headline = `The model matches the tap group <strong>${pct}%</strong> as
-      well as that group matches itself.`;
-  } else if (mv.spearman !== null) {
-    headline = `Model vs tapped agreement:
-      <strong>${fmt(mv.spearman)}</strong>`;
-  } else {
-    headline = 'Not enough spread in the responses to correlate yet.';
-  }
-
-  const topline = a.top_aoi.agree
-    ? `Both put the same area first.`
-    : `They disagree on which area comes first.`;
-
-  el.innerHTML = scope + `
-    <div class="headline">${headline} ${topline}</div>
-    <div class="metrics">
-      <div class="metric headline-metric">
-        <div class="label">Spatial agreement (Spearman &rho;)</div>
-        <div class="value">${fmt(mv.spearman)}</div>
-        <div class="against">random ${fmt(bl.random.spearman)} ·
-          centre bias ${fmt(bl.centre_bias.spearman)}</div>
-      </div>
-      <div class="metric ceiling">
-        <div class="label">Tap group vs itself (ceiling)</div>
-        <div class="value">${ceilingOk ? fmt(ce.spearman) : '—'}</div>
-        <div class="against">${ceilingOk
-          ? `split-half, ${ce.n_per_half} per side`
-          : `needs ${ce.needed} responses, have ${ce.have}`}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Order similarity</div>
-        <div class="value">${fmt(mv.sequence_similarity)}</div>
-        <div class="against">${ceilingOk
-          ? `people agree ${fmt(ce.sequence_similarity)}` : 'vs people: —'}</div>
-      </div>
-      <div class="metric">
-        <div class="label">NSS</div>
-        <div class="value">${fmt(mv.nss)}</div>
-        <div class="against">0 = chance${bl.centre_bias.nss !== null
-          ? ` · centre bias ${fmt(bl.centre_bias.nss)}` : ''}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Areas of interest</div>
-        <div class="value">${a.aois.count}</div>
-        <div class="against">from ${a.n_participants} people + ${a.n_model_samples} model runs</div>
-      </div>
-    </div>
-    <div class="note">Areas of interest are clustered from the pooled human and
-      model points, so neither side defines the yardstick it is measured
-      against.${a.aois.unshared.total > 0 ? ` ${a.aois.unshared.model_only} area(s)
-      only the model visited, ${a.aois.unshared.human_only} only people did —
-      shared empties inflate the correlation, so read it with that in mind.` : ''}
-      ${a.aois.bandwidth_widened ? ' Cluster width was widened to keep the count readable.' : ''}
-    </div>`;
-}
-
 function renderLegend(layers, n, run) {
   const keys = [];
   if (layers.heatmap && n) keys.push(
@@ -611,13 +511,12 @@ function sizeCanvas() {
 }
 
 async function tick() {
-  let state, data, model, stats, gaze;
+  let state, data, model, gaze;
   try {
-    [state, data, model, stats, gaze] = await Promise.all([
+    [state, data, model, gaze] = await Promise.all([
       fetch('/api/state').then((r) => r.json()),
       fetch('/api/markers').then((r) => r.json()),
       fetch('/api/model').then((r) => r.json()),
-      fetch('/api/analysis').then((r) => r.json()),
       fetch('/api/gaze/aggregate').then((r) => r.json()),
     ]);
   } catch { return; }
@@ -635,7 +534,6 @@ async function tick() {
     data.paths.length && data.paths[data.paths.length - 1],
     model.run && [model.run.run_id, model.run.source, model.run.prompt_kind],
     gaze.contributors, state.capture_mode,
-    state.layers.analysis && stats.ok && stats.model_vs_human,
     state.layers.prompt && model.config && model.config.prompt_text,
     state.layers.gaze && gaze.contributors,
     state.layers.gaze_paths && gaze.contributors,
@@ -682,7 +580,6 @@ async function tick() {
     renderSyntheticWarning(model.run, state.layers.model);
     renderExperimentalWarning(model.run, state.layers.model);
     renderPrompt(model.config, model.run, state.layers.prompt);
-    renderAnalysis(stats, state.layers.analysis);
     renderLegend(state.layers, data.count, model.run);
   }
 }

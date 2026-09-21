@@ -66,3 +66,40 @@
 }
 .chart-tip .k { color: var(--muted); }
 .chart-tip strong { font-variant-numeric: tabular-nums; }
+
+
+/* Correlation matrix. Square-ish cells, the number large enough to read
+   across the room, the context under it quiet. */
+.chart-table.matrix th { text-align: center; font-weight: 600; }
+.chart-table.matrix tbody th { text-align: left; white-space: nowrap; }
+.chart-table.matrix td.cc {
+  text-align: center; min-width: 116px; padding: 14px 10px;
+  border-radius: 6px;
+}
+.chart-table.matrix td.cc .v {
+  display: block; font-size: 1.375rem; font-weight: 600;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}
+.chart-table.matrix td.cc .sub {
+  display: block; font-size: 0.6875rem; opacity: .75; margin-top: 3px;
+}
+/* The diagonal is a ceiling, not a pair score: outlined, never filled, so it
+   is not read off the same scale as the cells beside it. */
+.chart-table.matrix td.cc.self {
+  border: 1px dashed var(--border); background: none;
+  color: var(--muted);
+}
+
+
+/* The read-out. Larger than a caption because it is the conclusion, quieter
+   than a heading because it is still only a reading. */
+.read { font-size: 0.9375rem; line-height: 1.55; margin: 0 0 10px;
+        max-width: 72ch; }
+.read:last-child { margin-bottom: 0; }
+.read .warn { color: var(--warn); }
+
+
+/* One difference map per pair, side by side. */
+.diff-block { flex: 1 1 260px; min-width: 240px; }
+.diff-block h3 { margin: 0 0 8px; font-size: 0.875rem; font-weight: 600; }
+#diff { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }

@@ -80,14 +80,7 @@ html, body { height: 100%; overflow: hidden; background: #0b0c10; }
 body.has-synthetic .display { padding-top: 46px; }
 
 /* Agreement panel */
-.analysis {
-  flex: 0 0 auto; background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 18px;
-}
-.analysis .headline {
-  font-size: clamp(1rem, 1.7vw, 1.375rem); margin-bottom: 12px; line-height: 1.35;
-}
-.analysis .headline strong { color: var(--accent); }
+
 .metrics { display: flex; gap: 14px; flex-wrap: wrap; }
 .metric {
   flex: 1 1 165px; background: var(--surface-2); border-radius: 8px;
@@ -101,8 +94,6 @@ body.has-synthetic .display { padding-top: 46px; }
 .metric .against { color: var(--muted); font-size: 0.78125rem; margin-top: 3px; }
 .metric.ceiling .value { color: var(--ok); }
 .metric.headline-metric .value { color: var(--accent); }
-.analysis .note { color: var(--muted); font-size: 0.8125rem; margin-top: 10px; }
-.analysis .unavailable { color: var(--warn); }
 
 /* An off-distribution prompt is a weaker claim than a trained one, and the
    audience cannot tell from the picture. Say so on the screen. */
@@ -167,7 +158,6 @@ body.has-experimental .display { padding-bottom: 40px; }
 .json-overlay .n { color: #f0b86e; }
 .json-overlay .b { color: #d78ff0; }
 
-
 /* Measured gaze — visually distinct from the tapped predictions, because the
    whole point is that they are different kinds of evidence. */
 #gaze { pointer-events: none; }
@@ -175,7 +165,6 @@ body.has-experimental .display { padding-bottom: 40px; }
 
 #gazepaths { pointer-events: none; }
 #gazepaths .gnum { font: 700 11px -apple-system, system-ui, sans-serif; fill: #1a0a2e; }
-
 
 /* Both groups' counts, always visible, so the room can watch itself fill. */
 .tallies { display: flex; gap: 22px; align-items: baseline; flex-wrap: wrap; }
@@ -209,7 +198,6 @@ body.has-experimental .display { padding-bottom: 40px; }
 .explain .dot.model { background: #199e70; }
 .explain .none { color: var(--muted); }
 .explain .between { color: var(--muted); display: block; margin-top: 8px; }
-
 
 /* Comparison charts, projected.
    A full-screen take-over like the raw-data view, because it answers a
@@ -273,23 +261,6 @@ body.has-experimental .display { padding-bottom: 40px; }
 @media (max-aspect-ratio: 1/1), (max-width: 900px) {
   .charts-overlay .cbody { flex-direction: column; overflow-y: auto; }
 }
-
-
-/* The analysis panel names its two sides before it names a number. */
-.analysis .scope {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-bottom: 10px; font-size: clamp(.8125rem, 1.15vw, 1rem);
-}
-.analysis .scope .kn { display: inline-flex; align-items: center; gap: 6px;
-                       font-weight: 600; }
-.analysis .scope .dot { width: 12px; height: 12px; border-radius: 50%; }
-.analysis .scope .dot.tap { background: #3987e5; }
-.analysis .scope .dot.model { background: #199e70; }
-.analysis .scope .vs { color: var(--muted); }
-.analysis .scope .excl {
-  color: var(--warn); font-size: 0.9em; margin-left: 4px;
-}
-
 
 /* The attention grid, drawn onto the picture rather than beside it. Sits
    above the density clouds but below the scanpaths, so a path stays readable

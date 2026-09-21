@@ -595,11 +595,21 @@ def comparison_maps(sources: dict, n: int = 3,
                 "of_ceiling": (r / ref) if (r is not None and ref and ref > 0) else None,
             }
 
-    # Difference map, only where both sides exist.
-    difference = None
-    if "measured" in maps and "tapped" in maps:
-        difference = (np.array(maps["measured"]["cells"])
-                      - np.array(maps["tapped"]["cells"])).tolist()
+    # A difference map for every pair present, not just the two human ones.
+    # "Where does the model part company with the people who were actually
+    # measured" is the question the whole project is for, and it had no
+    # picture — only a correlation, which says how much they differ and
+    # never where.
+    differences = {}
+    labels_all = list(maps)
+    for i, a in enumerate(labels_all):
+        for b in labels_all[i + 1:]:
+            differences[f"{a}|{b}"] = (np.array(maps[b]["cells"])
+                                       - np.array(maps[a]["cells"])).tolist()
+
+    # Kept under its old name so nothing that reads it breaks; it is simply
+    # the measured-minus-tapped entry of the map above.
+    difference = differences.get("tapped|measured")
 
     centre = (n // 2) * n + (n // 2)
     return {
@@ -610,6 +620,7 @@ def comparison_maps(sources: dict, n: int = 3,
         "ceilings": ceilings,
         "pairs": pairs,
         "difference": difference,
+        "differences": differences,
         "centre_bias": {k: maps[k]["cells"][centre] for k in maps},
         "baselines": {
             "random": {k: correlate(

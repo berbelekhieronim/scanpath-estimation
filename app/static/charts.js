@@ -273,8 +273,12 @@ export function sequentialScale(lo = "less looked at", hi = "more") {
 /* ---------- 2. difference map ---------- */
 
 export function differenceMap(data, opts = {}) {
-  const d = data.difference;
+  const key = opts.pair || "tapped|measured";
+  const d = (data.differences || {})[key]
+    || (key === "tapped|measured" ? data.difference : null);
   if (!d) return null;
+  const [aKey, bKey] = key.split("|");
+  const label = (k) => (SERIES.find((s) => s.key === k) || {label: k}).label;
   const hover = opts.hover !== false;
   const names = cellNames(data.grid);
   const max = Math.max(...d.map(Math.abs)) || 1;
@@ -282,20 +286,26 @@ export function differenceMap(data, opts = {}) {
   const row = el("div", "diff-row");
   const map = el("div", "map");
   map.appendChild(gridSvg(d, data.grid, {
-    aria: "Measured minus tapped, per grid cell",
+    aria: `${label(bKey)} minus ${label(aKey)}, per grid cell`,
     image: opts.image, aspect: opts.aspect,
     colour: (v) => divColour(v, max),
-    label: (v) => (v > 0 ? "+" : "") + Math.round(v * 100) + "%",
+    label: (v) => {
+      // Sign from the rounded number, not the raw one, or a value that
+      // rounds to nothing prints as "+0%".
+      const r = Math.round(v * 100);
+      return (r > 0 ? "+" : "") + r + "%";
+    },
     hover,
     tip: (i, v) => `<div class="k">${esc(names[i])}</div>`
       + `<strong>${v > 0 ? "+" : ""}${pct(v)}</strong>`
-      + `<div class="k">${v > 0 ? "looked at more than expected"
-                                : "expected more than looked at"}</div>`,
+      + `<div class="k">${esc(v > 0 ? label(bKey) : label(aKey))} `
+      + `drew more here</div>`,
   }));
   const scale = el("div", "scale");
-  scale.innerHTML = `<span>said&nbsp;more</span><div class="bar" style="background:`
-    + `linear-gradient(to right, ${DIV.lo.slice().reverse().join(",")},`
-    + `${DIV.mid},${DIV.hi.join(",")})"></div><span>looked&nbsp;more</span>`;
+  scale.innerHTML = `<span>${esc(label(aKey))}</span><div class="bar" `
+    + `style="background:linear-gradient(to right, `
+    + `${DIV.lo.slice().reverse().join(",")},${DIV.mid},${DIV.hi.join(",")})">`
+    + `</div><span>${esc(label(bKey))}</span>`;
   map.appendChild(scale);
   row.appendChild(map);
 
@@ -309,9 +319,9 @@ export function differenceMap(data, opts = {}) {
       + ` maps sum to 100%, so somewhere has to lose what somewhere else`
       + ` gains.</p>`
       + `<p class="note">Biggest gap: <strong>${esc(names[biggest])}</strong>`
-      + ` drew ${pct(d[biggest])} more measured gaze than tapped guesses,`
-      + ` while <strong>${esc(names[smallest])}</strong> drew`
-      + ` ${pct(Math.abs(d[smallest]))} less.</p>`
+      + ` drew ${pct(d[biggest])} more from ${esc(label(bKey))} than from`
+      + ` ${esc(label(aKey))}, while <strong>${esc(names[smallest])}</strong>`
+      + ` drew ${pct(Math.abs(d[smallest]))} less.</p>`
       + `<p class="note">Cells within a few percent of zero are drawn neutral`
       + ` grey: at this sample size they are not a difference worth`
       + ` reading.</p>`;
@@ -427,6 +437,96 @@ export function dotPlot(data, opts = {}) {
   return host;
 }
 
+/* ---------- 3. correlation matrix ---------- */
+
+/* Every pair at once, plus what each source manages against itself.
+ *
+ * This replaced a dot plot of per-cell shares with intervals. That chart was
+ * correct and nobody could read it: nine rows times three series of
+ * overlapping intervals is a lot of ink to answer "do these two agree".
+ * A matrix answers it in one glance and puts the number that makes it
+ * meaningful — the source's agreement with itself — on the diagonal beside
+ * it.
+ *
+ * Diverging colour, because correlation has a real zero: below it the two
+ * maps disagree, which is a different thing from agreeing weakly.
+ */
+export function correlationMatrix(data, opts = {}) {
+  const hover = opts.hover !== false;
+  const present = SERIES.filter((s) => (data.maps || {})[s.key]);
+  const host = el("div");
+  if (present.length < 2) {
+    host.textContent = "Needs at least two sources.";
+    return host;
+  }
+
+  const pairs = data.pairs || {};
+  const get = (a, b) => {
+    if (a === b) return {self: true, v: (data.ceilings || {})[a] ?? null};
+    const p = pairs[`${a}|${b}`] || pairs[`${b}|${a}`];
+    return {self: false, v: p ? p.cc : null, of: p ? p.of_ceiling : null};
+  };
+
+  const t = el("table", "chart-table matrix");
+  let head = "<thead><tr><th></th>";
+  present.forEach((s) => {
+    head += `<th><span class="swatch" style="background:${HEX[s.key]}"></span>`
+          + `${esc(s.label)}</th>`;
+  });
+  t.innerHTML = head + "</tr></thead>";
+
+  const tb = el("tbody");
+  present.forEach((row) => {
+    const tr = el("tr");
+    const th = el("th");
+    th.innerHTML = `<span class="swatch" style="background:${HEX[row.key]}">`
+                 + `</span>${esc(row.label)}`;
+    tr.appendChild(th);
+
+    present.forEach((col) => {
+      const {self, v, of} = get(row.key, col.key);
+      const td = el("td", "cc" + (self ? " self" : ""));
+      if (v === null || v === undefined) {
+        td.textContent = "—";
+        td.classList.add("na");
+      } else {
+        // Correlation runs -1..+1 with a meaningful zero, so it takes the
+        // diverging ramp. The diagonal is a different quantity and is left
+        // uncoloured rather than dropped into the same scale.
+        if (!self) td.style.background = divColour(v, 1);
+        td.innerHTML = `<span class="v">${v.toFixed(2)}</span>`
+          + (self
+              ? `<span class="sub">with itself</span>`
+              : of != null
+                ? `<span class="sub">${Math.round(of * 100)}% of ceiling</span>`
+                : "");
+      }
+      hoverable(td, self
+        ? `<div class="k">${esc(row.label)} against itself</div>`
+          + `<strong>${v == null ? "—" : v.toFixed(2)}</strong>`
+          + `<div class="k">split-half; the most any pair could score</div>`
+        : `<div class="k">${esc(row.label)} vs ${esc(col.label)}</div>`
+          + `<strong>${v == null ? "—" : v.toFixed(2)}</strong>`
+          + (of != null ? `<div class="k">${Math.round(of * 100)}% of the `
+                        + `ceiling</div>` : ""), hover);
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+
+  const scroller = el("div", "scroll-x");
+  scroller.appendChild(t);
+  host.appendChild(scroller);
+  host.appendChild(el("div", "note",
+    "Correlation between each pair's attention maps: \u22121 opposite, "
+    + "0 unrelated, 1 identical. The diagonal is each source against itself, "
+    + "split in half \u2014 no pair can be expected to beat it, so it is the "
+    + "number the rest are read against."));
+  return host;
+}
+
+
 /* ---------- 4. agreement ---------- */
 
 const numCell = (v, fmt) => (v === null || v === undefined)
@@ -510,6 +610,107 @@ export function numbersTable(data) {
   host.appendChild(scroller);
   return host;
 }
+
+/* ---------- reading the numbers out ----------
+ *
+ * Every sentence here is derived from what is on screen and carries the
+ * caveat that qualifies it. Nothing is asserted that the data does not
+ * support: a thin group, a synthetic model run and a missing ceiling each
+ * change what can honestly be said, and each says so.
+ *
+ * This is the one part of the page that states a conclusion, so it is also
+ * the part most able to overstate one. Bands are deliberately coarse.
+ */
+
+/* Named separately from the grid's row/column BANDS, which this collided
+   with — one module, one namespace, and the clash was silent until a syntax
+   check ran. */
+const AGREEMENT_BANDS = [
+  [0.70, "closely"],
+  [0.45, "moderately"],
+  [0.20, "loosely"],
+  [-Infinity, "barely at all"],
+];
+
+function band(r) {
+  const hit = AGREEMENT_BANDS.find(([edge]) => r >= edge);
+  return (hit || AGREEMENT_BANDS[AGREEMENT_BANDS.length - 1])[1];
+}
+
+export function interpretation(data) {
+  const host = el("div");
+  const maps = data.maps || {};
+  const pairs = data.pairs || {};
+  const n = (k) => (maps[k] ? maps[k].n : 0);
+  const say = (html, cls) => host.appendChild(
+    Object.assign(el("p", "read" + (cls ? " " + cls : "")), {innerHTML: html}));
+
+  const synthetic = data.model_source
+    && String(data.model_source).includes("synthetic");
+
+  const line = (a, b, subject) => {
+    const p = pairs[`${a}|${b}`] || pairs[`${b}|${a}`];
+    if (!p || p.cc === null) return null;
+    if (n(a) < 2 || n(b) < 2) return null;
+    const of = p.of_ceiling;
+    const ceiling = of != null
+      ? ` That is ${Math.round(of * 100)}% of the most they could have `
+        + `agreed, given how much each group agrees with itself.`
+      : " There are too few people for a ceiling yet, so the number cannot "
+        + "be called good or bad.";
+    return `${subject} <strong>${band(p.cc)}</strong> (${p.cc.toFixed(2)}).`
+         + ceiling;
+  };
+
+  const humans = line("tapped", "measured",
+    `Where ${n("tapped")} people said they would look matches where `
+    + `${n("measured")} others actually looked`);
+  if (humans) say(humans);
+
+  const vsModel = line("measured", "model",
+    `The model's prediction matches the ${n("measured")} people who were `
+    + `eye-tracked`);
+  if (vsModel) {
+    say(vsModel + (synthetic
+      ? ' <span class="warn">\u2014 but this run is a synthetic '
+        + 'placeholder, so that number is about noise.</span>' : ""));
+  }
+
+  const vsTaps = line("tapped", "model",
+    "The model also matches what people <em>predicted</em> about themselves");
+  if (vsTaps && !synthetic) say(vsTaps);
+
+  // The comparison that decides whether any of it means anything.
+  const centre = (data.baselines || {}).centre || {};
+  const mc = centre.model;
+  if (mc != null && !synthetic) {
+    const verdict = mc >= 0.80
+      ? '<span class="warn">At that level the model is largely reproducing '
+        + 'centre bias, and "it predicts where people look" is close to '
+        + '"people look at the middle".</span>'
+      : mc >= 0.60
+        ? "That is a lot of the model's map accounted for by centre bias "
+          + "alone. Whatever it adds on top is the part worth claiming."
+        : "The model is doing something a centre blob does not, which is the "
+          + "claim worth making.";
+    say("A plain blob in the middle of the picture scores "
+      + `<strong>${mc.toFixed(2)}</strong> against the model's own map. `
+      + verdict);
+  }
+
+  const thin = SERIES.filter((s) => n(s.key) > 0 && n(s.key) < 6);
+  if (thin.length) {
+    say(`<span class="warn">${thin.map((s) => s.label).join(" and ")} `
+      + `${thin.length > 1 ? "have" : "has"} fewer than six people. `
+      + `Read everything above as an indication, not a result.</span>`);
+  }
+
+  if (!host.children.length) {
+    say("Not enough data in two sources yet to compare anything.");
+  }
+  return host;
+}
+
 
 /* ---------- legend ---------- */
 
