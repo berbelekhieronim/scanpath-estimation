@@ -209,6 +209,52 @@ are handled. It is all downstream of compute that used to be unaffordable.
 
 ---
 
+## Before any of this: find out where the 85 minutes went
+
+One image and ten samples should not cost an hour and a half, and the sweeps
+above multiply whatever that cost is by ten or a hundred. Two things are
+already established from the code; the third and biggest needs measuring on
+the hardware.
+
+**Established, and fixed.** `precompute.py` built its job list image-major,
+so a mixed run alternated between the two LoRA adapters once per image. Ten
+images asking for free viewing and any probe meant **twenty model loads where
+two would do** — each one re-reading sixteen gigabytes and re-merging the
+LoRA. Jobs are now ordered by adapter.
+
+**Established, and suspected.** Nothing capped InternVL's dynamic image
+tiling. A photograph becomes a variable number of 448px tiles plus a
+thumbnail, each worth a few hundred vision tokens, and prefill cost and KV
+cache both scale with that count. `--max-tiles` now exists; whether it helps
+is a measurement, not an argument.
+
+**Unverified, and the most likely culprit.** `predict()` asks `generate()`
+for `num_return_sequences=n`, and both docstrings claimed that pays the image
+prefill once for all n samples. Transformers expands the batch *before*
+prefill, repeat-interleaving `pixel_values` with everything else — which
+would mean the vision tower encodes n identical copies of the same
+photograph. If true, ten samples cost close to ten prefills and every
+sample-count in this document is ten times more expensive than it looks.
+
+Both docstrings have been corrected to say this is unknown rather than to
+claim the favourable answer. `tools/bench_model.py` settles it:
+
+```bash
+python tools/bench_model.py --repo ../DeepGaze3.5-VL \
+    --image data/images/street_capybara_sign.jpg --device cuda --samples 8
+```
+
+It splits the load three ways, reports how many tiles the image actually
+became, and times one sample against n. **A ratio near n means the prefill is
+being repeated** — and then the fix is to prefill once and expand the cache,
+which is worth doing before running any sweep here. A flat ratio means
+sampling really is nearly free and the time is all load and prefill, which
+points at `--load-on-device` and `--max-tiles` instead.
+
+Run it before committing GPU hours to section 1.
+
+---
+
 ## Caveats worth keeping in front
 
 - **The adapter is non-commercial research-licensed.** These are experiments,

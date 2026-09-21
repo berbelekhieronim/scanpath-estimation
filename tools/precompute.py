@@ -9,9 +9,15 @@ audience.
     python tools/precompute.py --repo ../DeepGaze3.5-VL \
         --modes freeview --samples 10 --temperature 0.7
 
-The model is loaded once and reused across every image and config, and the
-samples for one config share a single image prefill, so the cost is roughly
-one prefill per image-config rather than per scanpath.
+Jobs are ordered so each LoRA adapter is loaded once, not once per image —
+switching adapters re-reads sixteen gigabytes and re-merges the LoRA, and
+built image-major a mixed run did that twenty times for ten images.
+
+The samples for one config go through a single generate() call. That shares
+the weights and the processor work; it does NOT obviously share the image
+prefill, because transformers expands the batch for num_return_sequences
+before prefill runs. `tools/bench_model.py` measures which it is on your
+hardware, and --max-tiles is the lever if it turns out prefill dominates.
 
 --synthetic generates placeholder scanpaths WITHOUT the model, for developing
 the display when no GPU is to hand. Its output is stamped source="synthetic"
@@ -60,6 +66,13 @@ def synthetic_scanpaths(image_path, n_fix, n_samples, seed):
     return out
 
 
+def adapter_for(mode: str) -> str:
+    """Free viewing has its own adapter; every task-directed mode shares the
+    search one. Defined once because the job ordering and the run loop must
+    agree — if they disagree the sort stops preventing reloads."""
+    return "combined_adapter" if mode == "freeview" else "visual_search_adapter"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -87,6 +100,12 @@ def main():
                     choices=["bfloat16", "float16", "float32"])
     ap.add_argument("--synthetic", action="store_true",
                     help="Placeholder output, no model. Clearly marked as such.")
+    ap.add_argument("--attn", default=None,
+                    help="attn_implementation to request (sdpa, flash_attention_2)")
+    ap.add_argument("--max-tiles", type=int, default=None,
+                    help="Cap InternVL's dynamic image tiling")
+    ap.add_argument("--load-on-device", action="store_true",
+                    help="Merge the LoRA on the accelerator, not on CPU")
     ap.add_argument("--force", action="store_true", help="Re-run existing outputs")
     args = ap.parse_args()
 
@@ -132,6 +151,13 @@ def main():
                 for target in targets:
                     jobs.append((img, mode, target))
 
+    # Group by adapter, because switching adapters reloads sixteen gigabytes
+    # of weights and re-merges the LoRA. Built image-major, a mixed run
+    # alternated between the two adapters once per image: ten images asking
+    # for free viewing and any probe meant twenty loads where two would do.
+    # Sorting is stable, so within an adapter the original order survives.
+    jobs.sort(key=lambda j: adapter_for(j[1]))
+
     print(f"{len(images)} image(s) x {len(jobs) // len(images)} config(s) "
           f"= {len(jobs)} run(s), {args.samples} sample(s) each")
     if args.synthetic:
@@ -143,11 +169,10 @@ def main():
         device = predict_mps.pick_device(args.device)
         print(f"Device: {device}")
         # Freeview and search use different adapters, so a mixed run reloads.
-        adapters_needed = {("combined_adapter" if m == "freeview"
-                            else "visual_search_adapter") for _, m, _ in jobs}
+        adapters_needed = {adapter_for(m) for _, m, _ in jobs}
         if len(adapters_needed) > 1:
-            print("NOTE: freeview and search use different adapters; the model "
-                  "will be reloaded when switching between them.")
+            print(f"NOTE: this run needs {len(adapters_needed)} adapters; jobs "
+                  f"are ordered so each is loaded once.")
 
     loaded_adapter = None
     written, skipped, failed = 0, 0, 0
@@ -176,18 +201,19 @@ def main():
                 from PIL import Image
 
                 # Probes are task-directed, so they use the search adapter.
-                adapter = ("combined_adapter" if mode == "freeview"
-                           else "visual_search_adapter")
+                adapter = adapter_for(mode)
                 if adapter != loaded_adapter:
                     model, processor = predict_mps.load_model(
-                        args.repo, adapter, device, args.dtype)
+                        args.repo, adapter, device, args.dtype,
+                        attn=args.attn, on_device=args.load_on_device)
                     loaded_adapter = adapter
 
                 image = Image.open(img).convert("RGB")
                 texts = predict_mps.predict(
                     model, processor, image, prompt_text, args.samples,
                     args.temperature, args.seed, device,
-                    max(64, 16 * args.num_fixations + 16))
+                    max(64, 16 * args.num_fixations + 16),
+                    max_tiles=args.max_tiles)
                 samples = [s for s in (gp.parse_scanpath(t) for t in texts) if s]
                 if not samples:
                     raise RuntimeError(f"no parseable coordinates: {texts[:1]}")

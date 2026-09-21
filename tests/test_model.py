@@ -195,3 +195,45 @@ def test_custom_prompt_kind_survives_the_round_trip(env):
         run = c.get("/api/model").json()["run"]
         assert run["prompt_kind"] == "custom"
         assert "curious person" in run["prompt_text"]
+
+
+def test_jobs_are_ordered_so_each_adapter_loads_once():
+    """Switching adapters re-reads sixteen gigabytes and re-merges the LoRA.
+    Built image-major, a mixed run alternated once per image: ten images
+    asking for free viewing and any probe meant twenty loads where two do."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import gaze_prompts as gp
+    import precompute
+
+    images = [f"img{i}.jpg" for i in range(10)]
+    configs = [(p["mode"], p["target"]) for p in gp.PROBES]
+    jobs = [(i, m, t) for i in images for (m, t) in configs]
+
+    def loads(js):
+        cur, n = None, 0
+        for _, mode, _ in js:
+            a = precompute.adapter_for(mode)
+            if a != cur:
+                n += 1
+                cur = a
+        return n
+
+    assert loads(jobs) == 20                       # what it used to do
+    jobs.sort(key=lambda j: precompute.adapter_for(j[1]))
+    assert loads(jobs) == 2                        # what it does now
+    # Every job survives the sort; only the order changes.
+    assert len(jobs) == len(images) * len(configs)
+
+
+def test_free_viewing_and_task_modes_map_to_their_own_adapters():
+    """The sort and the run loop must agree, or the sort stops helping."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import precompute
+
+    assert precompute.adapter_for("freeview") == "combined_adapter"
+    for mode in ("search", "probe"):
+        assert precompute.adapter_for(mode) == "visual_search_adapter"

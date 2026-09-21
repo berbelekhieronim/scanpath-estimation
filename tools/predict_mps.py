@@ -54,8 +54,16 @@ def pick_device(requested: str) -> str:
     return "cpu"
 
 
-def load_model(repo: str, adapter: str, device: str, dtype_name: str):
-    """Base model + LoRA adapter, merged, on the chosen device."""
+def load_model(repo: str, adapter: str, device: str, dtype_name: str,
+               attn: str = None, on_device: bool = False):
+    """Base model + LoRA adapter, merged, on the chosen device.
+
+    `on_device` loads the weights straight onto the accelerator so the LoRA
+    merge runs there too. The default path reads sixteen gigabytes to CPU,
+    merges 8B parameters as CPU matmuls, and only then copies everything
+    across. Opt-in rather than default because it changes how the weights are
+    materialised, and a run that works slowly beats one that does not run.
+    """
     import torch
     from peft import PeftModel
     from transformers import AutoModelForImageTextToText, AutoProcessor
@@ -75,26 +83,72 @@ def load_model(repo: str, adapter: str, device: str, dtype_name: str):
     print(f"Loading {gp.BASE_MODEL} ({dtype_name}) — first run downloads ~16GB…",
           file=sys.stderr)
     processor = AutoProcessor.from_pretrained(gp.BASE_MODEL, trust_remote_code=True)
-    model = AutoModelForImageTextToText.from_pretrained(
-        gp.BASE_MODEL, dtype=dtype, trust_remote_code=True, low_cpu_mem_usage=True,
-    )
+
+    kw = {"dtype": dtype, "trust_remote_code": True, "low_cpu_mem_usage": True}
+    if attn:
+        kw["attn_implementation"] = attn
+    if on_device and device != "cpu":
+        kw["device_map"] = {"": device}
+
+    try:
+        model = AutoModelForImageTextToText.from_pretrained(gp.BASE_MODEL, **kw)
+    except (ValueError, TypeError, ImportError) as exc:
+        # An unsupported attention backend or a missing accelerate should cost
+        # speed, never the run.
+        dropped = [k for k in ("attn_implementation", "device_map") if k in kw]
+        if not dropped:
+            raise
+        print(f"NOTE: {', '.join(dropped)} not usable here ({exc}); loading "
+              f"without.", file=sys.stderr)
+        for k in dropped:
+            kw.pop(k)
+        model = AutoModelForImageTextToText.from_pretrained(gp.BASE_MODEL, **kw)
 
     print(f"Merging LoRA adapter: {adapter_path}", file=sys.stderr)
     model = PeftModel.from_pretrained(model, str(adapter_path))
     model = model.merge_and_unload()
 
+    # Already there when device_map placed it; .to() is then a no-op.
     model.to(device).eval()
     return model, processor
 
 
-def predict(model, processor, image, prompt_text, n_samples, temperature,
-            seed, device, max_new_tokens):
-    """One prefill, n_samples decodes.
+def _tiling_kwargs(processor, image, chat, max_tiles):
+    """Cap InternVL's dynamic tiling, if this processor version allows it.
 
-    Batching the samples in a single generate() call is what makes virtual
-    observers affordable: the image prefill is thousands of vision tokens and
-    is identical across samples, so paying it once instead of n times turns
-    ten observers into roughly the cost of one.
+    A photograph becomes a variable number of 448px tiles plus a thumbnail,
+    each worth a few hundred vision tokens, and nothing here constrained it —
+    so prefill cost was whatever the processor defaulted to. The kwarg name
+    has moved between versions, so the accepted spelling is discovered rather
+    than assumed, and an unsupported cap is reported instead of raising.
+    """
+    if not max_tiles:
+        return {}
+    for name in ("max_num_tiles", "max_num", "max_patches"):
+        try:
+            processor(images=image, text=chat, return_tensors="pt",
+                      **{name: max_tiles})
+            return {name: max_tiles}
+        except TypeError:
+            continue
+    print(f"NOTE: this processor accepts no known tile-cap argument; "
+          f"--max-tiles {max_tiles} ignored.", file=sys.stderr)
+    return {}
+
+
+def predict(model, processor, image, prompt_text, n_samples, temperature,
+            seed, device, max_new_tokens, max_tiles=None):
+    """All samples in one generate() call.
+
+    This used to claim it paid the image prefill once for every sample. That
+    is very likely false: transformers expands the batch for
+    num_return_sequences *before* prefill, repeat-interleaving pixel_values
+    with everything else, so the vision tower probably encodes n identical
+    copies of the photograph. `tools/bench_model.py` settles it by timing one
+    sample against n — if the ratio is near n, the prefill is being repeated.
+
+    It is still one call rather than n calls, which keeps the weights and the
+    processor work shared. But do not read it as free.
     """
     import torch
 
@@ -102,7 +156,9 @@ def predict(model, processor, image, prompt_text, n_samples, temperature,
         {"type": "image"}, {"type": "text", "text": prompt_text}]}]
     chat = processor.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True)
-    inputs = processor(images=image, text=chat, return_tensors="pt").to(device)
+    proc_kw = _tiling_kwargs(processor, image, chat, max_tiles)
+    inputs = processor(images=image, text=chat, return_tensors="pt",
+                       **proc_kw).to(device)
 
     torch.manual_seed(seed)
     greedy = temperature <= 0.0
@@ -143,6 +199,17 @@ def main():
     ap.add_argument("--dtype", default="bfloat16",
                     choices=["bfloat16", "float16", "float32"])
     ap.add_argument("--max-new-tokens", type=int, default=None)
+    ap.add_argument("--attn", default=None,
+                    help="attn_implementation to request (sdpa, "
+                         "flash_attention_2). Measure with bench_model.py "
+                         "before relying on it")
+    ap.add_argument("--max-tiles", type=int, default=None,
+                    help="Cap InternVL's dynamic image tiling. Fewer tiles "
+                         "means a much cheaper prefill and a smaller cache, "
+                         "at some loss of detail")
+    ap.add_argument("--load-on-device", action="store_true",
+                    help="Materialise weights on the accelerator so the LoRA "
+                         "merge runs there instead of as CPU matmuls")
     ap.add_argument("--prompt", help=(
         "EXPERIMENTAL. Replace the trained prompt with your own text. The "
         "adapter was fine-tuned on two exact templates; anything else is "
@@ -196,11 +263,14 @@ def main():
 
     # Probes are task-directed, so they use the search adapter.
     adapter = "combined_adapter" if args.mode == "freeview" else "visual_search_adapter"
-    model, processor = load_model(args.repo, adapter, device, args.dtype)
+    model, processor = load_model(args.repo, adapter, device, args.dtype,
+                                  attn=args.attn,
+                                  on_device=args.load_on_device)
 
     t0 = time.time()
     texts = predict(model, processor, image, prompt_text, args.samples,
-                    args.temperature, args.seed, device, max_new)
+                    args.temperature, args.seed, device, max_new,
+                    max_tiles=args.max_tiles)
     elapsed = time.time() - t0
 
     samples_grid = [gp.parse_scanpath(t) for t in texts]
