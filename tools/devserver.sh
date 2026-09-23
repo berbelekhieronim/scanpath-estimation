@@ -23,7 +23,7 @@
 # actually listening on the port is the truth, and this script finds it.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORT="${2:-${SCANPATH_PORT:-8000}}"
+PORT="${2:-${PORT:-${SCANPATH_PORT:-8000}}}"
 PIDFILE="$ROOT/.devserver-$PORT.pid"
 LOG="$ROOT/.devserver-$PORT.log"
 
@@ -120,13 +120,18 @@ start() {
         return 1
       fi
       echo "starting on port $alt instead"
-      echo "in a Codespace: forward $alt in the Ports panel, and use that URL"
+      echo "in a Codespace: set port $alt to Public in the Ports panel"
       port="$alt"
       PIDFILE="$ROOT/.devserver-$port.pid"
       LOG="$ROOT/.devserver-$port.log"
     fi
   fi
 
+  # app/urls.py reads PORT to build the join URL and the QR code. Without
+  # this, a server that moved to 8131 still hands participants a link to
+  # 8000 — the QR scans, the phone gets nothing, and the failure looks like
+  # the network rather than the port.
+  export PORT="$port"
   setsid nohup python3 -m uvicorn app.main:app --host 0.0.0.0 --port "$port" \
     > "$LOG" 2>&1 < /dev/null &
   local spawned=$!

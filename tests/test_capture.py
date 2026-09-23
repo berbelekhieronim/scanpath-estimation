@@ -155,6 +155,25 @@ def test_codespace_url_is_reconstructed(client, monkeypatch):
     assert urls.codespace_url(8000) == "https://fuzzy-space-guide-xyz-8000.app.github.dev"
 
 
+def test_port_env_is_respected_for_codespace_urls(client, monkeypatch):
+    monkeypatch.setenv("PORT", "8123")
+    monkeypatch.setenv("CODESPACE_NAME", "fuzzy-space-guide-xyz")
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    from app import urls
+    importlib.reload(urls)
+    assert urls.app_port() == 8123
+    assert urls.codespace_url() == "https://fuzzy-space-guide-xyz-8123.app.github.dev"
+
+
+def test_request_url_port_is_used_for_codespace_urls(client, monkeypatch):
+    monkeypatch.setenv("CODESPACE_NAME", "fuzzy-space-guide-xyz")
+    monkeypatch.setenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev")
+    from app import urls
+    importlib.reload(urls)
+    info = urls.public_base_url("http://localhost:8123/")
+    assert info == {"url": "https://fuzzy-space-guide-xyz-8123.app.github.dev", "source": "codespace"}
+
+
 def test_qr_svg_is_scalable(client):
     r = client.get("/api/qr.svg")
     assert r.status_code == 200

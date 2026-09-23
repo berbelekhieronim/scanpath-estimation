@@ -1,0 +1,31 @@
+INFO:     Started server process [5064]
+INFO:     Waiting for application startup.
+
+==============================================================
+  scanpath-estimation
+==============================================================
+  images found:   2
+  model runs:     2
+
+  *** 19 SYNTHETIC run(s) loaded — placeholder
+      data, NOT model output. Badged in the UI. ***
+
+  START HERE:     /start        <- links to every page
+
+  participant:    /            (what phones scan into)
+  join screen:    /qr          (project while people join)
+  display:        /display     (project during the demo)
+  controls:       /control?k=_WnngBAraJiC
+  admin:          /admin?k=_WnngBAraJiC
+
+  control token:  _WnngBAraJiC
+==============================================================
+
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8140 (Press CTRL+C to quit)
+INFO:     127.0.0.1:41136 - "GET /healthz HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41140 - "GET /api/join-url HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [5064]
