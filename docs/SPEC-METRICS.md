@@ -181,12 +181,11 @@ the diagonal. Compact, and puts every comparison in one place.
   the statistics before seeing the distribution risks fitting the analysis to
   a guess, which is exactly the thing the baselines exist to prevent.
 
-**Genuinely blocked:**
-
-- **Anything involving the model.** Every model run is still synthetic
-  placeholder data. Until `precompute.py` runs against the real weights, any
-  model comparison is a comparison with noise, and a chart of it would look
-  entirely convincing while meaning nothing.
+**Resolved since this was written:** the model comparison is no longer
+blocked. Two real free-viewing runs exist (5 fixations x 10 observers, 10 x
+20) and the synthetic generator that this paragraph warned about has been
+removed outright — see `docs/SCOPE.md` §3.1 for why a badge was not enough
+protection.
 
 **Recommended order:** build the visual comparison next (panels, difference
 map, proportions chart), generate real model runs, run one session with
@@ -253,12 +252,13 @@ cannot take the page down mid-session. They are not exposed as controls
 because §6 has not yet decided the grid, and a control implies the decision is
 the viewer's to make.
 
-The page refuses to overstate what it has: it names the model panel as
-synthetic whenever the run is a placeholder, says so when a group has fewer
-than four people and the ceiling cannot be estimated, and reports excluded
-calibrations rather than dropping them. §5's "should wait" and "blocked"
-items are unchanged — no inferential test is computed, and every model number
-on the page is still a number about noise.
+The page refuses to overstate what it has: it names how many observers each
+source rests on, says so when a group has fewer than four people and the
+ceiling cannot be estimated, and reports excluded calibrations rather than
+dropping them. §5's "should wait" items are unchanged — no inferential test
+is computed. Its "blocked" item is not: the model numbers were numbers about
+noise when this was written, and are now real output (§5, and
+`docs/SCOPE.md` §1.2).
 
 
 ---
@@ -273,10 +273,10 @@ differences between the screens are options passed to it, not second copies.
 
 **The projected view shows less on purpose.** It carries the three density
 panels, the difference map, the legend and one plain-language headline
-sentence. It leaves out the dot plot, the numbers table and every tooltip:
+sentence. It leaves out the numbers table and every tooltip:
 nobody hovers a mark or reads a nine-row table from the back of a room, and
 including them would only make the two images that do work smaller. The
-caveats stay — a synthetic model run and the count of excluded calibrations
+caveats stay — a thin group and the count of excluded calibrations
 are named in the footer, at projector size.
 
 **Charts and raw JSON are mutually exclusive**, enforced in `LAYERS.set`
@@ -500,8 +500,8 @@ tapped-vs-model figures are computed.
 
 The page now states a conclusion in words, which makes it the part most able
 to overstate one. Every sentence is derived from what is on screen and
-carries the caveat that qualifies it — a thin group, a synthetic model run, a
-missing ceiling. Agreement bands are deliberately coarse (closely /
+carries the caveat that qualifies it — a thin group, a run at a different
+fixation count, a missing ceiling. Agreement bands are deliberately coarse (closely /
 moderately / loosely / barely at all) because the underlying number does not
 support finer language at these sample sizes.
 

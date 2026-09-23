@@ -126,8 +126,10 @@ python tools/precompute.py --repo ../DeepGaze3.5-VL \
 This writes one JSON per image into `data/model/`. Commit and push them, pull
 in the Codespace, then press **Reload runs from disk** in `/control`.
 
-**Delete the synthetic placeholders first** — `rm data/model/*.json` — or the
-display will show a red SYNTHETIC banner over your results.
+There are no placeholder runs to clear any more — the synthetic generator is
+gone (`docs/SCOPE.md` §3.1). Every file in `data/model/` is real output, and
+`/control` labels each run by both its fixation count and its observer count,
+because runs at different `n` are not interchangeable.
 
 ---
 
@@ -299,8 +301,8 @@ Read it in this order:
    is the honest figure; the raw correlation alone is not.
 
 It refreshes every five seconds, so it can be left open while the session
-runs. It says so on the page when the model run is synthetic, when a group has
-fewer than four people, and how many calibrations were excluded.
+runs. It says so on the page when a group has fewer than four people, and how
+many calibrations were excluded.
 
 **To project it**, turn on **Comparison charts** under *Full screen* in
 Controls. The display then shows the panels, the difference map and one
@@ -405,11 +407,10 @@ Writes `data/exports/session-TIMESTAMP.json` and a CSV of every tap. **Commit
 them.** A Codespace is eventually deleted with its database inside, and
 participant responses are the only thing here that cannot be regenerated.
 
-**Commit real model runs too.** `data/model/*.json` used to be gitignored on
-the grounds that runs are regenerable. That holds for synthetic placeholders,
-which take seconds. It does not hold for a real run: an hour or more of MPS
-time against weights this Codespace does not have, so the JSON is the only
-artifact of that compute. Check what you have before a session:
+**Commit model runs too.** `data/model/*.json` used to be gitignored on the
+grounds that runs are regenerable. They are not, in any useful sense: a run is
+hours of MPS time against weights this Codespace does not have, so the JSON is
+the only artifact of that compute. Check what you have before a session:
 
 ```bash
 python3 -c "
