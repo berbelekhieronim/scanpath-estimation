@@ -92,10 +92,13 @@ def test_unknown_probe_raises():
         gp.build_prompt("probe", 5, "nonexistent")
 
 
-def test_the_requested_probes_all_exist():
-    for wanted in ["unexpected", "people", "cars", "roads", "count_buildings",
-                   "living", "danger", "music", "robots"]:
-        assert wanted in gp.PROBES_BY_ID
+def test_only_the_trained_tasks_are_offered():
+    """There were nine probes; seven asked the adapter for something it was
+    never trained on. The model always returns coordinates, so each one
+    produced a confident scanpath of unvalidated quality that the UI could
+    only label, never fix. What is offered now is what can be defended."""
+    assert set(gp.PROBES_BY_ID) == {"freeview", "cars"}
+    assert all(p["kind"] == "trained" for p in gp.PROBES)
 
 
 # --- API -------------------------------------------------------------------
@@ -107,10 +110,10 @@ def test_probes_endpoint_is_public(client):
 
 
 def test_selecting_a_probe_sets_mode_and_target(client):
-    cfg = client.post("/api/control/model-config", json={"probe": "danger"},
+    cfg = client.post("/api/control/model-config", json={"probe": "cars"},
                       headers=AUTH).json()["config"]
-    assert cfg["mode"] == "probe" and cfg["target"] == "danger"
-    assert cfg["probe"]["kind"] == "experimental"
+    assert cfg["mode"] == "search" and cfg["target"] == "car"
+    assert cfg["probe"]["kind"] == "trained"
 
 
 def test_config_exposes_the_prompt_text(client):
@@ -129,16 +132,19 @@ def test_unknown_probe_is_rejected(client):
 
 
 def test_probe_runs_resolve_to_their_own_run(client):
-    for pid, coords in (("danger", [[0.1, 0.1]]), ("music", [[0.9, 0.9]])):
+    """Free viewing and the car search are different runs on the same image,
+    and switching the task must fetch the other one rather than keep the
+    first."""
+    for pid, coords in (("freeview", [[0.1, 0.1]]), ("cars", [[0.9, 0.9]])):
         p = gp.PROBES_BY_ID[pid]
         client.post("/api/model/push", json={
             "image": "a.jpg", "mode": p["mode"], "target": p["target"],
             "n_fixations": 5, "scanpath_norm": coords,
         }, headers=AUTH)
 
-    client.post("/api/control/model-config", json={"probe": "danger"}, headers=AUTH)
+    client.post("/api/control/model-config", json={"probe": "freeview"}, headers=AUTH)
     assert client.get("/api/model").json()["run"]["scanpath_norm"] == [[0.1, 0.1]]
-    client.post("/api/control/model-config", json={"probe": "music"}, headers=AUTH)
+    client.post("/api/control/model-config", json={"probe": "cars"}, headers=AUTH)
     assert client.get("/api/model").json()["run"]["scanpath_norm"] == [[0.9, 0.9]]
 
 

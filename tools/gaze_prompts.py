@@ -92,60 +92,28 @@ def build_probe_prompt(phrase: str, n: int) -> str:
 # The probe catalogue offered in the UI.
 #
 # `kind` is the honest bit. "trained" probes use a template the LoRA was
-# fine-tuned on, with a target from COCO-Search18. "experimental" probes ask
-# for something the adapter never saw; the model still returns coordinates —
-# it always does — but their quality is unvalidated.
+# fine-tuned on, with a target from COCO-Search18.
 #
-# Keeping one trained probe (cars) alongside the experimental ones is
-# deliberate: it is the control the others can be compared against.
+# There were eight more, marked "experimental": danger, music, robots,
+# counting buildings and so on, built on build_probe_prompt() below. They
+# asked the adapter for something it never saw. The model always returns
+# coordinates, so each one produced a confident-looking scanpath of
+# unvalidated quality, and the UI could only label that fact rather than fix
+# it. Offering nine tasks of which seven are guesses is not a menu, it is a
+# way to show an audience a prediction nobody can defend. They are gone.
+#
+# build_probe_prompt() stays because the next release means to earn one of
+# these back properly — run it, measure it against human data, and add it
+# only if it holds up.
 PROBES = [
     {"id": "freeview", "label": "Free viewing", "kind": "trained",
      "mode": "freeview", "target": None,
      "note": "The trained free-viewing template. No task given."},
 
-    {"id": "cars", "label": "Cars", "kind": "trained",
+    {"id": "cars", "label": "Find a car", "kind": "trained",
      "mode": "search", "target": "car",
-     "note": "A trained COCO-Search18 target — the on-distribution control."},
-
-    {"id": "unexpected", "label": "What shouldn't be here", "kind": "experimental",
-     "mode": "probe", "target": "unexpected",
-     "phrase": "looking for anything that does not belong in this scene",
-     "note": "Scene-violation probe. Strong on an image with an incongruous object."},
-
-    {"id": "people", "label": "People", "kind": "experimental",
-     "mode": "probe", "target": "people",
-     "phrase": "searching for people",
-     "note": "COCO-Search18 has no person category, so this is untrained."},
-
-    {"id": "roads", "label": "Roads", "kind": "experimental",
-     "mode": "probe", "target": "roads",
-     "phrase": "searching for the road",
-     "note": "A region rather than an object — untrained."},
-
-    {"id": "count_buildings", "label": "Count buildings", "kind": "experimental",
-     "mode": "probe", "target": "count_buildings",
-     "phrase": "counting the buildings",
-     "note": "Counting drives a different scanpath shape than searching."},
-
-    {"id": "living", "label": "Find living things", "kind": "experimental",
-     "mode": "probe", "target": "living",
-     "phrase": "searching for living things",
-     "note": "A category, not an object class."},
-
-    {"id": "danger", "label": "Danger", "kind": "experimental",
-     "mode": "probe", "target": "danger",
-     "phrase": "looking for anything dangerous",
-     "note": "Abstract and judgement-based — well off-distribution."},
-
-    {"id": "music", "label": "Music", "kind": "experimental",
-     "mode": "probe", "target": "music",
-     "phrase": "searching for anything related to music",
-     "note": "Usually absent from a street scene — a useful negative control."},
-
-    {"id": "robots", "label": "Robots", "kind": "experimental",
-     "mode": "probe", "target": "robots",
-     "phrase": "searching for robots",
-     "note": "Also usually absent. Compare with 'music' for consistency."},
+     "note": "A trained COCO-Search18 target. The one task the adapter was "
+             "actually fine-tuned to do, alongside free viewing."},
 ]
 
 PROBES_BY_ID = {p["id"]: p for p in PROBES}

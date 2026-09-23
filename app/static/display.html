@@ -257,7 +257,12 @@ async function renderGrid(show, source, state) {
     aria: `${series.label}: attention per grid cell, over the image`,
     aspect,
     colour: (v) => seqColour(v, max),
-    label: (v) => Math.round(v * 100) + '%',
+    // No numbers on the projected grid. The shading already says which
+    // quadrants drew attention, which is the whole point of showing it
+    // live; printing "24%" on each cell turns a picture the room reads at
+    // a glance into a table it squints at, and gives away the analysis the
+    // charts are there to walk through afterwards.
+    label: () => '',
     // Translucent: the whole point is that the audience still sees what is
     // in each part of the picture while reading how much attention it drew.
     fillOpacity: 0.46,

@@ -192,6 +192,15 @@ export function gridSvg(cells, n, o) {
     const rect = svg("rect", {x, y, width: cw, height: ch, rx: 4, fill,
                               "fill-opacity": alpha});
     root.appendChild(rect);
+    // A label() returning nothing means this grid is read by shading alone
+    // (the projected one). Appending an empty <text> would still put a node
+    // in the accessibility tree for every cell.
+    const text = o.label(v);
+    if (text === "" || text == null) {
+      hoverable(rect, o.tip(i, v), o.hover);
+      return;
+    }
+
     const t = svg("text", {
       x: x + cw / 2, y: y + ch / 2 + ch * 0.055, "text-anchor": "middle",
       "font-size": Math.round(Math.min(cw, ch) * 0.155), "font-weight": 600,
@@ -201,7 +210,7 @@ export function gridSvg(cells, n, o) {
       ...(alpha < 1 ? {stroke: inkFor(fill) === "#12131a" ? "#fff" : "#000",
                        "stroke-width": 3, "paint-order": "stroke"} : {}),
     });
-    t.textContent = o.label(v);
+    t.textContent = text;
     root.appendChild(t);
     hoverable(rect, o.tip(i, v), o.hover);
   });

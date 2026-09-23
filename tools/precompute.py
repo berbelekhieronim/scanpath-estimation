@@ -19,15 +19,17 @@ prefill, because transformers expands the batch for num_return_sequences
 before prefill runs. `tools/bench_model.py` measures which it is on your
 hardware, and --max-tiles is the lever if it turns out prefill dominates.
 
---synthetic generates placeholder scanpaths WITHOUT the model, for developing
-the display when no GPU is to hand. Its output is stamped source="synthetic"
-and the web app shows a loud warning badge whenever it renders one. Never
-present synthetic output as a model prediction.
+There used to be a --synthetic mode: placeholder scanpaths generated without
+the model, for building the display with no GPU to hand. It is gone. It did
+its job, and then it became the main risk in the room — a plausible centre-
+biased blob, stamped source="synthetic" and badged in the UI, which is exactly
+the amount of protection that fails when somebody is presenting and reading
+the picture rather than the badge. Real runs exist now; there is nothing left
+for a stand-in to do.
 """
 
 import argparse
 import json
-import random
 import sys
 import time
 from pathlib import Path
@@ -46,26 +48,6 @@ def run_name(image_stem, mode, target, n):
     return "__".join(bits) + ".json"
 
 
-def synthetic_scanpaths(image_path, n_fix, n_samples, seed):
-    """Plausible-looking placeholder paths. NOT model output.
-
-    Deliberately simple: a centre-biased first fixation, then a walk with
-    modest step sizes. It exists only so the rendering pipeline can be built
-    and tested without a GPU.
-    """
-    rng = random.Random(f"{image_path}-{seed}")
-    out = []
-    for _ in range(n_samples):
-        path = []
-        x, y = rng.gauss(50, 9), rng.gauss(50, 9)
-        for _ in range(n_fix):
-            x = min(97, max(2, x + rng.gauss(0, 19)))
-            y = min(97, max(2, y + rng.gauss(0, 15)))
-            path.append((int(x), int(y)))
-        out.append(path)
-    return out
-
-
 def adapter_for(mode: str) -> str:
     """Free viewing has its own adapter; every task-directed mode shares the
     search one. Defined once because the job ordering and the run loop must
@@ -76,7 +58,8 @@ def adapter_for(mode: str) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--repo", help="DeepGaze3.5-VL checkout (required unless --synthetic)")
+    ap.add_argument("--repo", required=True,
+                    help="DeepGaze3.5-VL checkout")
     ap.add_argument("--images-dir", default=str(DEFAULT_IMAGES))
     ap.add_argument("--out-dir", default=str(DEFAULT_OUT))
     ap.add_argument("--only", nargs="*", help="Limit to these image filenames")
@@ -99,8 +82,6 @@ def main():
     ap.add_argument("--dtype", default="auto",
                     choices=["auto", "bfloat16", "float16", "float32"],
                     help="auto picks what the hardware supports")
-    ap.add_argument("--synthetic", action="store_true",
-                    help="Placeholder output, no model. Clearly marked as such.")
     ap.add_argument("--attn", default=None,
                     help="attn_implementation to request (sdpa, flash_attention_2)")
     ap.add_argument("--max-tiles", type=int, default=None,
@@ -120,9 +101,6 @@ def main():
             print(f"{pr['id']:18s} {pr['kind']:14s} {pr['label']}")
             print(f"{'':18s} {'':14s} {pr['note']}")
         return 0
-
-    if not args.synthetic and not args.repo:
-        ap.error("--repo is required (or use --synthetic for placeholder output)")
 
     # Probe ids expand into (mode, target) pairs.
     probe_ids = list(args.probes or [])
@@ -165,28 +143,24 @@ def main():
 
     print(f"{len(images)} image(s) x {len(jobs) // len(images)} config(s) "
           f"= {len(jobs)} run(s), {args.samples} sample(s) each")
-    if args.synthetic:
-        print("\n*** SYNTHETIC MODE — placeholder data, not model output ***\n")
-
     model = processor = None
-    if not args.synthetic:
-        import predict
-        import backends
-        device = predict.pick_device(args.device)
-        prof = backends.detect(device, args.quant, args.chunk)
-        if args.dtype != "auto":
-            prof.dtype = args.dtype
-        if args.attn:
-            prof.attn = args.attn
-        if args.max_tiles:
-            prof.max_tiles = args.max_tiles
-        dtype_name = prof.dtype
-        print(backends.describe(prof))
-        # Freeview and search use different adapters, so a mixed run reloads.
-        adapters_needed = {adapter_for(m) for _, m, _ in jobs}
-        if len(adapters_needed) > 1:
-            print(f"NOTE: this run needs {len(adapters_needed)} adapters; jobs "
-                  f"are ordered so each is loaded once.")
+    import predict
+    import backends
+    device = predict.pick_device(args.device)
+    prof = backends.detect(device, args.quant, args.chunk)
+    if args.dtype != "auto":
+        prof.dtype = args.dtype
+    if args.attn:
+        prof.attn = args.attn
+    if args.max_tiles:
+        prof.max_tiles = args.max_tiles
+    dtype_name = prof.dtype
+    print(backends.describe(prof))
+    # Freeview and search use different adapters, so a mixed run reloads.
+    adapters_needed = {adapter_for(m) for _, m, _ in jobs}
+    if len(adapters_needed) > 1:
+        print(f"NOTE: this run needs {len(adapters_needed)} adapters; jobs "
+              f"are ordered so each is loaded once.")
 
     loaded_adapter = None
     written, skipped, failed = 0, 0, 0
@@ -206,35 +180,30 @@ def main():
         t0 = time.time()
 
         try:
-            if args.synthetic:
-                samples = synthetic_scanpaths(img.name, args.num_fixations,
-                                              args.samples, args.seed)
-                source, model_name, device_used = "synthetic", "SYNTHETIC (no model)", "none"
-            else:
-                import predict
-                from PIL import Image
+            import predict
+            from PIL import Image
 
-                # Probes are task-directed, so they use the search adapter.
-                adapter = adapter_for(mode)
-                if adapter != loaded_adapter:
-                    model, processor = predict.load_model(
-                        args.repo, adapter, device, dtype_name,
-                        attn=prof.attn, quant=prof.quant,
-                        on_device=args.load_on_device or prof.load_on_device)
-                    loaded_adapter = adapter
+            # Probes are task-directed, so they use the search adapter.
+            adapter = adapter_for(mode)
+            if adapter != loaded_adapter:
+                model, processor = predict.load_model(
+                    args.repo, adapter, device, dtype_name,
+                    attn=prof.attn, quant=prof.quant,
+                    on_device=args.load_on_device or prof.load_on_device)
+                loaded_adapter = adapter
 
-                image = Image.open(img).convert("RGB")
-                texts = predict.predict(
-                    model, processor, image, prompt_text, args.samples,
-                    args.temperature, args.seed, device,
-                    max(64, 16 * args.num_fixations + 16),
-                    max_tiles=prof.max_tiles, chunk=prof.sample_chunk)
-                samples = [s for s in (gp.parse_scanpath(t) for t in texts) if s]
-                if not samples:
-                    raise RuntimeError(f"no parseable coordinates: {texts[:1]}")
-                source = "precomputed"
-                model_name = f"{gp.BASE_MODEL} + {adapter}"
-                device_used = device
+            image = Image.open(img).convert("RGB")
+            texts = predict.predict(
+                model, processor, image, prompt_text, args.samples,
+                args.temperature, args.seed, device,
+                max(64, 16 * args.num_fixations + 16),
+                max_tiles=prof.max_tiles, chunk=prof.sample_chunk)
+            samples = [s for s in (gp.parse_scanpath(t) for t in texts) if s]
+            if not samples:
+                raise RuntimeError(f"no parseable coordinates: {texts[:1]}")
+            source = "precomputed"
+            model_name = f"{gp.BASE_MODEL} + {adapter}"
+            device_used = device
         except Exception as exc:
             print(f"    FAILED: {exc}")
             failed += 1
@@ -268,10 +237,8 @@ def main():
     total = time.time() - started
     print(f"\nWrote {written}, skipped {skipped}, failed {failed} "
           f"in {total / 60:.1f} min")
-    if written and not args.synthetic:
+    if written:
         print("Restart the app (or press Rescan in /admin) to pick these up.")
-    if args.synthetic:
-        print("\nReminder: this output is SYNTHETIC and is badged as such in the UI.")
     return 1 if failed else 0
 
 

@@ -336,3 +336,25 @@ def test_the_page_downloads_through_the_token_header(env):
     page = (STATIC / "rounds.html").read_text()
     assert "createObjectURL" in page
     assert "X-Control-Token" in page
+
+
+# --- what the projected screen shows ---------------------------------------
+
+def test_the_projected_grid_carries_no_numbers():
+    """Shading says which quadrants drew attention, which is what the room
+    can read at a glance. Printing "24%" on every cell turns that into a
+    table, and gives away the analysis the charts exist to walk through."""
+    page = (STATIC / "display.html").read_text()
+    block = page[page.index("async function renderGrid"):]
+    block = block[:block.index("\n}\n")]
+    assert "label: () => ''" in block
+    assert "Math.round(v * 100) + '%'" not in block
+
+
+def test_only_the_trained_tasks_survive_into_the_ui():
+    """The experimental probes are gone from the catalogue, so nothing in
+    the operator UI should still offer them."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import gaze_prompts as gp
+    assert set(gp.PROBES_BY_ID) == {"freeview", "cars"}
