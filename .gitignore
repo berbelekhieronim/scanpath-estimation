@@ -29,6 +29,9 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Dev server helper artifacts
-.devserver.pid
-.devserver.log
+# Dev server helper artifacts. Globbed, not named: devserver.sh writes one
+# pid file and one log per port, so the old fixed names stopped matching the
+# moment the script learned to move ports — and `git add -A` swept four logs
+# into the repository before anyone noticed.
+.devserver*.pid
+.devserver*.log
