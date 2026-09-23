@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rounds — scanpath-estimation</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  .rnd { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px; }
+  .rnd.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .rnd .head { display: flex; justify-content: space-between; gap: 12px;
+               align-items: baseline; flex-wrap: wrap; }
+  .rnd h2 { font-size: 1rem; margin: 0; font-weight: 600; }
+  .when { color: var(--muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+  .counts { display: flex; gap: 18px; flex-wrap: wrap;
+            font-size: 0.875rem; color: var(--muted); }
+  .counts b { color: var(--text); font-weight: 600;
+              font-variant-numeric: tabular-nums; }
+  .badge.imported { background: var(--surface-2); color: var(--muted); }
+  .badge.empty-round { background: var(--surface-2); color: var(--warn); }
+  .drop {
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    padding: 22px 16px; text-align: center; color: var(--muted);
+    background: var(--surface); transition: border-color .12s, color .12s;
+  }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop input { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="nav" id="nav"></nav>
+
+  <header class="bar">
+    <div>
+      <h1>Rounds</h1>
+      <div class="sub">Every sitting this server holds — export one, put one back</div>
+    </div>
+    <div class="row">
+      <button id="export-all">Export everything</button>
+    </div>
+  </header>
+
+  <div id="notice" class="notice"></div>
+
+  <div id="auth" class="card" style="display:none; margin-bottom:24px">
+    <div style="margin-bottom:10px">Presenter token required.</div>
+    <div class="row">
+      <input type="password" id="token" placeholder="Control token" autocomplete="off">
+      <button class="primary" id="save-token">Unlock</button>
+    </div>
+    <div class="sub" style="margin-top:10px">
+      Printed in the server console at startup.
+    </div>
+  </div>
+
+  <label class="drop" id="drop" for="file" style="margin-bottom:24px; display:block">
+    <strong>Import a round</strong><br>
+    Drop a snapshot here, or click to choose a file.
+    <input type="file" id="file" accept="application/json,.json" multiple>
+  </label>
+
+  <div id="list"></div>
+
+  <div class="card" style="margin-top:24px">
+    <div class="sub">
+      A snapshot carries the responses, the calibration grades, the group
+      assignments and the settings the round ran under — everything but the
+      picture, which lives in <code>data/images/</code> and travels with the
+      repository. Importing never overwrites: it adds a closed round you can
+      then make active.
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { renderNav } from '/static/nav.js';
+renderNav('/rounds');
+</script>
+<script>
+const $ = (s) => document.querySelector(s);
+const TOKEN_KEY = 'scanpath_control_token';
+
+let token = localStorage.getItem(TOKEN_KEY)
+  || new URLSearchParams(location.search).get('k') || '';
+
+function notice(msg, kind = '') {
+  const el = $('#notice');
+  el.textContent = msg || '';
+  el.className = 'notice' + (kind ? ' ' + kind : '');
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { ...(opts.headers || {}), 'X-Control-Token': token },
+  });
+  if (res.status === 403) { $('#auth').style.display = ''; throw new Error('Invalid token'); }
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  }
+  return res;
+}
+
+async function checkToken() {
+  if (!token) { $('#auth').style.display = ''; return false; }
+  try {
+    await api('/api/admin/token-check');
+    $('#auth').style.display = 'none';
+    return true;
+  } catch { return false; }
+}
+
+/* Timestamps are stored in UTC; a presenter reads them in the room they are
+   standing in, so they are shown local with the date spelled out. Two rounds
+   half an hour apart are otherwise impossible to tell apart at a glance. */
+function when(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function render(rounds) {
+  const list = $('#list');
+  if (!rounds.length) {
+    list.innerHTML = `<div class="empty"><p>No rounds yet.</p>
+      <p class="sub">One opens by itself when an image is set active.</p></div>`;
+    return;
+  }
+  list.innerHTML = rounds.map((r) => {
+    const people = r.tappers + r.gaze_sessions;
+    const badges = [
+      r.active ? '<span class="badge active">Active</span>' : '',
+      r.imported_from ? '<span class="badge imported">Imported</span>' : '',
+      !people ? '<span class="badge empty-round">No responses</span>' : '',
+    ].filter(Boolean).join(' ');
+    return `<div class="card rnd ${r.active ? 'on' : ''}">
+      <div class="head">
+        <h2>${r.label ? esc(r.label) + ' · ' : ''}${esc(r.image)}</h2>
+        <div>${badges}</div>
+      </div>
+      <div class="when">Opened ${when(r.opened_at)}${
+        r.closed_at ? ` · closed ${when(r.closed_at)}` : ' · still open'}</div>
+      <div class="counts">
+        <span><b>${r.tappers}</b> tapped</span>
+        <span><b>${r.markers}</b> taps</span>
+        <span><b>${r.gaze_sessions}</b> eye-tracked</span>
+        <span><b>${r.gaze_usable}</b> usable</span>
+      </div>
+      <div class="row">
+        <button data-export="${r.id}">Export</button>
+        ${r.active ? '' : `<button data-activate="${r.id}">Make active</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-export]').forEach((b) =>
+    b.addEventListener('click', () => download(
+      `/api/rounds/${b.dataset.export}/export`)));
+  list.querySelectorAll('[data-activate]').forEach((b) =>
+    b.addEventListener('click', () => activate(Number(b.dataset.activate))));
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+/* The token lives in a header, so the browser cannot simply follow a link to
+   a protected download. Fetch it, then hand the blob to an anchor. */
+async function download(path) {
+  try {
+    const res = await api(path);
+    const cd = res.headers.get('Content-Disposition') || '';
+    const name = (cd.match(/filename="([^"]+)"/) || [])[1] || 'round.json';
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notice(`Saved ${name}.`, 'ok');
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+async function activate(id) {
+  try {
+    await api(`/api/rounds/${id}/activate`, { method: 'POST' });
+    notice('That round is live now — its settings came back with it.', 'ok');
+    await load();
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+async function importFiles(files) {
+  let added = 0; let skipped = 0; const warnings = [];
+  for (const f of files) {
+    let payload;
+    try {
+      payload = JSON.parse(await f.text());
+    } catch {
+      notice(`${f.name} is not valid JSON.`, 'err');
+      return;
+    }
+    try {
+      const out = await (await api('/api/rounds/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })).json();
+      (out.results || []).forEach((r) => {
+        if (r.imported) added += 1; else skipped += 1;
+        (r.warnings || []).forEach((w) => warnings.push(w));
+      });
+    } catch (e) {
+      notice(`${f.name}: ${e.message}`, 'err');
+      return;
+    }
+  }
+  const bits = [`imported ${added} round${added === 1 ? '' : 's'}`];
+  if (skipped) bits.push(`${skipped} already here`);
+  notice(bits.join(', ') + (warnings.length ? ` — ${warnings.join('; ')}` : '.'),
+         warnings.length ? 'warn' : 'ok');
+  await load();
+}
+
+async function load() {
+  try {
+    const { rounds } = await (await fetch('/api/rounds')).json();
+    render(rounds);
+  } catch (e) { notice(e.message, 'err'); }
+}
+
+$('#export-all').addEventListener('click', () => download('/api/rounds/export-all'));
+
+$('#file').addEventListener('change', (e) => {
+  if (e.target.files.length) importFiles([...e.target.files]);
+  e.target.value = '';
+});
+
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => {
+  e.preventDefault(); drop.classList.add('over');
+}));
+['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => {
+  e.preventDefault(); drop.classList.remove('over');
+}));
+drop.addEventListener('drop', (e) => {
+  const files = [...(e.dataTransfer?.files || [])];
+  if (files.length) importFiles(files);
+});
+
+$('#save-token').addEventListener('click', async () => {
+  token = $('#token').value.trim();
+  localStorage.setItem(TOKEN_KEY, token);
+  if (await checkToken()) { notice('Unlocked.', 'ok'); await load(); }
+  else notice('That token was not accepted.', 'err');
+});
+$('#token').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#save-token').click();
+});
+
+(async function init() {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  await checkToken();
+  await load();
+})();
+</script>
+</body>
+</html>

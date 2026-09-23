@@ -20,13 +20,14 @@ import sys as _sys
 _sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent / "tools"))
 import gaze_prompts  # noqa: E402  (tools/ is this repo's own code)
 
-from . import analysis, config, db, urls
+from . import analysis, config, db, rounds, urls
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     db.init_db()
+    rounds.init_rounds()
     result = db.sync_images_from_disk()
     model_sync = db.sync_model_runs_from_disk()
 
@@ -193,6 +194,11 @@ def page_gazetest():
 def page_charts():
     """The comparison charts: tapped vs measured vs model, side by side."""
     return _page("charts.html")
+
+
+@app.get("/rounds", include_in_schema=False)
+def page_rounds():
+    return _page("rounds.html")
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -911,6 +917,9 @@ def api_set_active(image_id: int = Query(...), _: str = Depends(require_token)):
     image = db.get_image(image_id)
     if not image:
         raise HTTPException(status_code=404, detail="No such image")
+    previous = db.get_active_round()
+    if previous:
+        rounds.freeze_settings(previous["id"])
     round_id = db.open_round(image_id)
     return {"round_id": round_id, "image": image}
 
@@ -1069,8 +1078,72 @@ def api_reset_round(_: str = Depends(require_token)):
     round_ = db.get_active_round()
     if not round_:
         raise HTTPException(status_code=409, detail="No round is open")
+    rounds.freeze_settings(round_["id"])
     new_id = db.open_round(round_["image_id"])
     return {"round_id": new_id, "previous_round_id": round_["id"]}
+
+
+# --------------------------------------------------------------------------
+# Rounds
+# --------------------------------------------------------------------------
+
+@app.get("/api/rounds")
+def api_rounds():
+    """Every sitting this database holds.
+
+    Public, like the other read endpoints: it carries counts and timestamps,
+    nothing a participant could not see on the screen anyway.
+    """
+    return {"rounds": rounds.list_rounds()}
+
+
+@app.get("/api/rounds/{round_id}/export")
+def api_round_export(round_id: int, _: str = Depends(require_token)):
+    """One round as a file, named by date so a folder of them sorts itself."""
+    try:
+        snapshot = rounds.export_round(round_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return JSONResponse(
+        content=snapshot,
+        headers={"Content-Disposition":
+                 f'attachment; filename="{rounds.export_filename(snapshot)}"'})
+
+
+@app.get("/api/rounds/export-all")
+def api_rounds_export_all(_: str = Depends(require_token)):
+    bundle = rounds.export_all()
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition":
+                 f'attachment; filename="{rounds.bundle_filename(bundle)}"'})
+
+
+@app.post("/api/rounds/import")
+def api_round_import(payload: dict, duplicate: bool = False,
+                     _: str = Depends(require_token)):
+    """Read a snapshot back in as a new round.
+
+    Never overwrites: a restore that clobbers is how you lose live data
+    twenty minutes before a talk. Re-importing the same file does nothing
+    unless duplicate=1 says you meant it.
+    """
+    try:
+        return rounds.import_any(payload, duplicate=duplicate)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+
+@app.post("/api/rounds/{round_id}/activate")
+def api_round_activate(round_id: int, _: str = Depends(require_token)):
+    """Put a past or imported round back on the screen, settings and all."""
+    current = db.get_active_round()
+    if current and current["id"] != round_id:
+        rounds.freeze_settings(current["id"])
+    try:
+        return rounds.activate(round_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/api/admin/token-check")

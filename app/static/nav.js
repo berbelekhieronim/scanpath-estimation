@@ -14,6 +14,7 @@ const PAGES = [
   { path: '/start',   label: 'Start' },
   { path: '/control', label: 'Controls', token: true },
   { path: '/charts',  label: 'Charts' },
+  { path: '/rounds',  label: 'Rounds', token: true },
   { path: '/admin',   label: 'Images', token: true },
   { path: '/display', label: 'Display', blank: true },
   { path: '/qr',      label: 'Join screen', blank: true },
