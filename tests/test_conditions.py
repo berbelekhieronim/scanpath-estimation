@@ -167,11 +167,15 @@ def test_tap_page_routes_gaze_participants_away():
     assert "'/consent'" in src
 
 
-def test_tap_page_does_not_offer_measurement_in_a_split_design():
-    """Offering both to the same person is exactly the contamination the
-    between-subjects split exists to avoid."""
+def test_the_tap_page_offers_measurement_to_nobody():
+    """This used to depend on the capture mode: in tap-only mode the same
+    person was invited to be measured as well. There is no mode in which
+    that is wanted — whoever is eye-tracked arrives by their own join code —
+    so the offer is gone rather than conditional."""
     src = (STATIC / "index.html").read_text()
-    assert "betweenSubjects" in src
+    for gone in ("betweenSubjects", "to-camera",
+                 "Measure where I really look"):
+        assert gone not in src, gone
 
 
 def test_assignment_sticks_to_a_device(client):

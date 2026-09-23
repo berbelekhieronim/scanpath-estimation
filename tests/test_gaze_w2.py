@@ -250,18 +250,21 @@ def test_taps_are_acknowledged_immediately():
     assert "navigator.vibrate" in src
 
 
-def test_instructions_lead_with_eyes_visible_in_the_preview():
-    """Revised after device testing. Resting the phone helps, but being able
-    to see your own eyes in the preview matters more, and mandating the desk
-    was awkward — either posture works if the eyes are in frame."""
+def test_instructions_lead_with_eyes_visible_then_holding_still():
+    """Revised twice. First after device testing: seeing your own eyes in the
+    preview matters more than the posture, so either is allowed. Then again
+    because the posture sentence described how to sit rather than the thing
+    that actually costs accuracy — that the phone and the head must not move
+    once calibration has measured them."""
     src = (STATIC / "calibrate.html").read_text()
     # Collapsed, because the source wraps these sentences across lines.
     flat = " ".join(src.split())
     assert "eyes are visible" in flat
-    # Either posture still works — held or resting — but it must be upright,
-    # because sideways is measurably the worse way to run this.
-    assert "rest it on the desk" in flat
-    assert "upright and comfortably close</strong>" in flat
+    assert "stay still" in flat
+    assert "head stay where they are" in flat
+    # And what to do with the dots, without reference to the other condition.
+    assert "Look straight at each" in flat
+    assert "Don't tap" not in flat
 
 
 def test_all_overlay_copy_lives_inside_ov_body():
@@ -288,8 +291,18 @@ def test_the_thank_you_screen_has_no_button_and_does_not_navigate():
     """Navigating away landed the participant on the tap screen — the wrong
     condition for them, and where the stray Submit and Undo came from."""
     src = (STATIC / "calibrate.html").read_text()
-    assert "All done — look up at the screen" in src
+    assert "That's everything" in src
     assert "location.href = '/?viewed=1'" not in src
+
+
+def test_no_screen_tells_a_participant_to_look_up_at_the_screen():
+    """Written for a room where the projected display is the next thing to
+    watch. Half the time it is not: the phone is being handed back, or the
+    round is still filling, and an instruction that does not match the room
+    reads as the app not knowing what is going on."""
+    for page in ("calibrate.html", "view.html", "index.html"):
+        flat = " ".join((STATIC / page).read_text().split()).lower()
+        assert "look up at the screen" not in flat, page
 
 
 def test_diagnostics_are_persisted(client):

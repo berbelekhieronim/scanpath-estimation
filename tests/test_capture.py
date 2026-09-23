@@ -188,19 +188,19 @@ def test_actions_bar_would_otherwise_have_beaten_hidden():
     assert "display: flex" in capture.split(".actions")[1].split("}")[0]
 
 
-def test_submitting_offers_the_measurement_stage():
-    """Without this the journey dead-ends at the taps and the eye-tracking
-    half is unreachable from the participant's own phone."""
+def test_submitting_never_sends_a_tapper_into_calibration():
+    """The tap page used to end with "now the other half" and a button into
+    the camera stages. Tapping and eye tracking are separate conditions —
+    one person in both is the contamination the whole split exists to avoid,
+    and it was reachable with one tap."""
     src = (Path(__file__).resolve().parent.parent
            / "app" / "static" / "index.html").read_text()
-    assert "to-camera" in src
-    assert "'/consent'" in src and "'/calibrate'" in src
-
-
-def test_a_device_that_declined_is_not_asked_again():
-    src = (Path(__file__).resolve().parent.parent
-           / "app" / "static" / "index.html").read_text()
-    assert "consent === 'declined'" in src
+    assert "to-camera" not in src
+    assert "Measure where I really look" not in src
+    # Routing an already-gaze-assigned arrival to /calibrate is the correct
+    # use and stays; what is gone is reaching it from the thank-you screen.
+    assert src.count("'/calibrate'") == 1
+    assert "routeByCondition" in src
 
 
 @pytest.mark.parametrize("flag,phrase", [

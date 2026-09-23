@@ -186,10 +186,12 @@
       <div id="ov-body">
         <p><strong>Check your eyes are visible</strong> in the camera preview,
            top right. That matters more than anything else.</p>
-        <p>Hold the phone <strong>upright and comfortably close</strong>, or
-           rest it on the desk — either works, just keep it still. Closer is
-           better: it makes the picture bigger in your view.</p>
-        <p>A dot will move around. Look at it, then tap it.</p>
+        <p><strong>Get comfortable and then stay still.</strong> Hold the phone
+           upright, or rest it on a surface — either works. What matters is
+           that the phone and your head stay where they are from now until the
+           end. Moving either is what makes the measurement drift.</p>
+        <p>Dots will appear one at a time. <strong>Look straight at each
+           dot</strong> and hold your eyes there while you confirm it.</p>
       </div>
       <button class="primary" id="ov-btn">Start</button>
       <div id="last-run" style="margin-top:18px;font-size:.75rem;color:var(--muted);
@@ -641,9 +643,10 @@ async function report(result) {
          result.bias && Math.hypot(result.bias[0], result.bias[1]) > 0.02
            ? `, after correcting a ${Math.round(Math.hypot(result.bias[0],
               result.bias[1]) * 100)}% offset` : ''}.</p>
-       <p>Next: the picture appears for five seconds.
-          <strong>Don't tap — just look at it naturally.</strong></p>
-       <p style="font-size:.8125rem">Keep the phone exactly where it is.</p>
+       <p>Next, a picture appears. <strong>Just look at it naturally</strong>
+          — there is nothing to aim at and nothing to get right.</p>
+       <p style="font-size:.8125rem">Keep the phone and your head exactly
+          where they are.</p>
        ${diagLine}`,
       'Show me the picture', runViewingStage);
   } else {
@@ -780,11 +783,12 @@ async function uploadSamples(samples, durationMs, blinks, offImage) {
     return;
   }
   crumb('done'); clearCrumb();
-  // No button and no navigation. Leaving the page would land the participant
-  // back on the tap screen, which is the wrong condition for them and is
-  // where the stray Submit and Undo controls came from.
+  // No button and no navigation. This participant is in the eye-tracked
+  // group and there is nothing after this for them; sending them onward
+  // would land them on the tap screen, which is the other group's task.
   overlay('Thank you',
-    `<div class="big">✓</div><p>All done — look up at the screen.</p>`, null);
+    `<div class="big">✓</div><p>That's everything. You can put the phone
+       down.</p>`, null);
 }
 
 $('ov-btn').onclick = begin;

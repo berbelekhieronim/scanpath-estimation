@@ -124,39 +124,19 @@ function showThanks(count) {
   $('prompt').hidden = true;
   $('actions').hidden = true;
 
-  // Offer the measurement stage, unless this device already declined the
-  // camera. Without this the journey dead-ends here and the eye-tracking
-  // half of the demo is unreachable from the participant's own phone.
-  // In a between-subjects design the tap group must NOT also be measured,
-  // so the offer only appears when the presenter is running tap-only mode
-  // and is deliberately collecting both from the same people.
-  let consent = null;
-  try { consent = localStorage.getItem('scanpath_camera_consent'); } catch {}
-  const betweenSubjects = window.__captureMode && window.__captureMode !== 'tap';
-  const offer = (consent === 'declined' || betweenSubjects) ? '' : `
-      <p style="margin-top:22px">Now the other half: we can <strong>measure</strong>
-         where your eyes actually go, and compare it with what you just
-         predicted.</p>
-      <button class="primary" id="to-camera"
-              style="margin-top:12px;padding:14px 24px;font-size:1rem">
-        Measure where I really look
-      </button>`;
-
+  // Tapping and eye tracking are separate conditions, not two halves of one
+  // journey. This screen used to offer "now the other half" and send a
+  // tapper into calibration, which put the same person in both groups — the
+  // one thing a between-subjects comparison cannot survive. Whoever is
+  // eye-tracked is sent there by their own join code, never from here.
   $('stage').innerHTML = `<div class="state">
       <div>
         <div class="big">✓</div>
         <h2>Thank you</h2>
         <p>Your ${count} marks are in.</p>
-        ${offer || '<p>Look up at the screen.</p>'}
+        <p>That's everything. You can put the phone down.</p>
       </div>
     </div>`;
-
-  const btn = $('to-camera');
-  if (btn) {
-    btn.addEventListener('click', () => {
-      location.href = consent === 'granted' ? '/calibrate' : '/consent';
-    });
-  }
 }
 
 /* Arriving back here from the camera stages. Landing on the tap screen with
@@ -165,9 +145,11 @@ function showThanks(count) {
 function showReturnState() {
   const p = new URLSearchParams(location.search);
   const messages = {
-    nocamera: ['No camera measurement', 'That part was skipped. Your taps still count — look up at the screen.'],
-    declined: ['Camera not used', 'Your taps still count — look up at the screen.'],
-    viewed: ['All done', 'We have both your prediction and your actual looking. Look up at the screen.'],
+    nocamera: ['No camera measurement',
+               "That part was skipped — nothing else is needed from you."],
+    declined: ['Camera not used',
+               "No problem. Nothing else is needed from you."],
+    viewed: ['All done', "Your looking was recorded. You can put the phone down."],
   };
   for (const key of Object.keys(messages)) {
     if (!p.has(key)) continue;
