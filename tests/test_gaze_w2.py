@@ -519,3 +519,50 @@ def test_a_wandering_finger_cancels_the_hold():
     page = (STATIC / "calibrate.html").read_text()
     block = page[page.index("if (!window._tapBound)"):]
     assert "pointermove" in block and "endHold()" in block
+
+
+# --- rehearsing the gesture before it counts -------------------------------
+
+def test_the_gesture_is_rehearsed_on_the_screen_before_start():
+    """The first calibration point is reliably the worst one: it is taken
+    while the participant is still working out what is being asked, and
+    weighted the same as the eight that follow. A sentence does not fix
+    that — nobody reads instructions on a phone they are about to be
+    measured through — so the gesture is shown before it counts."""
+    page = (STATIC / "calibrate.html").read_text()
+    assert 'id="howto"' in page
+    # It sits in the intro overlay, above the Start button.
+    body = page[page.index('<div id="ov-body">'):page.index('id="ov-btn"')]
+    assert 'id="howto"' in body
+
+
+def test_the_rehearsal_teaches_both_halves_of_the_gesture():
+    """Two things have to land and neither is obvious from the text: the
+    finger goes somewhere that is NOT the dot, and the press is held rather
+    than tapped."""
+    flat = " ".join((STATIC / "calibrate.html").read_text().split())
+    assert "anywhere else</strong>" in flat
+    assert "not on the dot" in flat
+    assert "until the ring closes" in flat
+
+
+def test_the_rehearsal_is_handsets_only():
+    """Desktop confirms on a click. Showing someone a held press there would
+    rehearse a gesture that page does not use."""
+    page = (STATIC / "calibrate.html").read_text()
+    assert "if (isHandset()) document.getElementById('howto').hidden = false" in page
+    # Hidden in the markup, revealed by script — so a desktop never flashes it.
+    assert '<figure class="howto" id="howto" hidden>' in page
+
+
+def test_the_rehearsal_does_not_outrun_a_reduced_motion_preference():
+    """Someone who asked for less motion still needs to see where the finger
+    goes, so the frame carrying the lesson is shown rather than nothing."""
+    page = (STATIC / "calibrate.html").read_text()
+    # There are two such blocks; the one for the rehearsal is the one that
+    # mentions it. Indexing on the media query alone finds .pulse instead.
+    i = page.index(".howto-thumb, .howto-ring")
+    block = page[page.rindex("@media (prefers-reduced-motion: reduce)", 0, i):]
+    block = block[:block.index("\n  }") + 4]
+    assert "animation: none" in block
+    assert ".howto-thumb { opacity: 1" in block

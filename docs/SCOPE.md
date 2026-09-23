@@ -106,9 +106,15 @@ instead of just stating.
 
 **Built.** Handsets only. Desktop keeps click-the-dot — the accuracy
 problem is a thumb on a phone, and one interaction that works does not need
-replacing to match one that is being fixed. No rehearsal animation before
-Start for now; if the first calibration point turns out to be reliably the
-worst one, that is the evidence for adding it.
+replacing to match one that is being fixed.
+
+The rehearsal before Start is built too. It was deferred on the grounds that
+the first calibration point being worst was a guess; it is not much of a
+guess. That point is taken while the participant is still working out what
+is being asked, and weighted the same as the eight after it. The intro
+overlay now loops the gesture at its real 500ms, which is the only way to
+teach the two things the text cannot: the finger goes somewhere that is
+*not* the dot, and the press is held rather than tapped.
 
 ### 2.2 The validity threshold — S to decide, M to implement
 

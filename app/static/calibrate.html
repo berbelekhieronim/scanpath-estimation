@@ -99,6 +99,82 @@
   .overlay p { margin: 0 0 8px; color: var(--muted); max-width: 400px; }
   .overlay .big { font-size: 3rem; line-height: 1; margin-bottom: 14px; }
 
+  /* The rehearsal.
+   *
+   * The first calibration point is reliably the worst one, because it is the
+   * one taken while the participant is still working out what is being asked
+   * of them — and it is taken anyway, and weighted the same as the eight
+   * that follow. A sentence does not fix that; people do not read
+   * instructions on a phone they are about to be measured through.
+   *
+   * So the gesture is shown, at its real 500ms, before it counts for
+   * anything. Two things have to land: the thumb goes somewhere that is NOT
+   * the dot, and the press is held rather than tapped. Both are visible here
+   * and neither is obvious from the text.
+   *
+   * Handsets only, because holding is handsets only. --t is the loop; the
+   * implosion inside it runs for exactly HOLD_MS so what is rehearsed is
+   * what happens. */
+  .howto { margin: 2px 0 14px; display: flex; flex-direction: column;
+           align-items: center; gap: 9px; }
+  .howto-screen { --t: 2600ms; position: relative;
+                  width: 190px; height: 118px; border-radius: 13px;
+                  border: 1px solid var(--border); background: var(--surface-2);
+                  overflow: hidden; }
+  .howto-dot { position: absolute; left: 50%; top: 32%;
+               width: 22px; height: 22px; margin: -11px 0 0 -11px;
+               border-radius: 50%; display: grid; place-items: center; }
+  .howto-dot::before { content: ''; position: absolute; inset: 0;
+                       border-radius: 50%; border: 2px solid var(--accent);
+                       opacity: .45; }
+  .howto-dot::after { content: ''; width: 8px; height: 8px; border-radius: 50%;
+                      background: var(--accent);
+                      animation: howto-core var(--t) linear infinite; }
+  .howto-ring { position: absolute; inset: -7px; border-radius: 50%;
+                border: 3px solid var(--accent); opacity: 0;
+                animation: howto-ring var(--t) linear infinite; }
+  /* Deliberately far from the dot, and low — where a thumb actually rests.
+     Dashed and soft on purpose: a second solid ring here would read as
+     another thing to look at, which is the exact opposite of the lesson. */
+  .howto-thumb { position: absolute; left: 24%; top: 78%;
+                 width: 34px; height: 34px; margin: -17px 0 0 -17px;
+                 border-radius: 50%; border: 2px dashed var(--muted);
+                 background: rgba(154,159,181,.18); opacity: 0;
+                 display: grid; place-items: center;
+                 animation: howto-thumb var(--t) linear infinite; }
+  .howto-thumb::after { content: ''; width: 15px; height: 15px;
+                        border-radius: 50%; background: var(--muted);
+                        opacity: .55; }
+  .howto figcaption { font-size: .8125rem; color: var(--muted);
+                      max-width: 300px; text-align: center; }
+
+  /* 0-8% press · 11.5-30.8% the 500ms hold · 33% taken · 46% lifted */
+  @keyframes howto-thumb {
+    0%, 2%   { opacity: 0; transform: scale(.7); }
+    8%, 44%  { opacity: 1; transform: scale(1); }
+    50%, 100% { opacity: 0; transform: scale(1); }
+  }
+  @keyframes howto-ring {
+    0%, 11.5% { opacity: 0; transform: scale(1); }
+    13%       { opacity: .95; transform: scale(1); }
+    30.8%     { opacity: 1; transform: scale(.34); }
+    37%, 100% { opacity: 0; transform: scale(.34); }
+  }
+  @keyframes howto-core {
+    0%, 11.5% { transform: scale(1); }
+    30.8%     { transform: scale(1.3); }
+    33%       { transform: scale(2.1); }
+    42%, 100% { transform: scale(1); }
+  }
+
+  /* Someone who has asked for less motion still needs to see where the thumb
+     goes, so the frame that carries the lesson is shown rather than nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    .howto-thumb, .howto-ring, .howto-dot::after { animation: none; }
+    .howto-thumb { opacity: 1; }
+    .howto-ring { opacity: 1; transform: scale(.55); }
+  }
+
   /* The small target exists so the outermost calibration points stay on a
      narrow screen. Anything wider can have the larger ring back, which is an
      easier thing to fix the eye on. */
@@ -210,6 +286,15 @@
            end. Moving either is what makes the measurement drift.</p>
         <p>Dots will appear one at a time. <strong>Look straight at each
            dot</strong> and hold your eyes there while you confirm it.</p>
+        <figure class="howto" id="howto" hidden>
+          <div class="howto-screen" aria-hidden="true">
+            <span class="howto-dot"><span class="howto-ring"></span></span>
+            <span class="howto-thumb"></span>
+          </div>
+          <figcaption>Eyes on the dot. Press and hold <strong>anywhere
+            else</strong> &mdash; not on the dot &mdash; until the ring
+            closes.</figcaption>
+        </figure>
       </div>
       <button class="primary" id="ov-btn">Start</button>
       <div id="last-run" style="margin-top:18px;font-size:.75rem;color:var(--muted);
@@ -240,6 +325,12 @@ import { track as trackViewport, viewport, onChange as onViewportChange,
 
 // Before anything measures or lays out anything.
 trackViewport();
+
+// The rehearsal is only true on a handset: desktop confirms on a click, so
+// showing someone a held press would teach them the wrong gesture.
+// getElementById rather than $(), which is declared further down and would
+// be in its temporal dead zone here.
+if (isHandset()) document.getElementById('howto').hidden = false;
 
 
 const $ = (id) => document.getElementById(id);
