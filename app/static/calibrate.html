@@ -16,7 +16,7 @@
                overscroll-behavior: none; }
   .cal { position: fixed; top: 0; left: 0;
          width: var(--app-w, 100vw); height: var(--app-h, 100dvh);
-         touch-action: manipulation;
+         touch-action: none;
          -webkit-user-select: none; user-select: none;
          -webkit-tap-highlight-color: transparent; }
 
@@ -46,6 +46,24 @@
   .target.validating::before { border-color: var(--ok); }
   .target.validating::after { background: var(--ok); box-shadow: 0 0 0 4px rgba(62,207,142,.22); }
   .target.hidden { display: none; }
+
+  /* Hold to confirm. The dot implodes over the hold window, which paces the
+     press and — more usefully — gives the eye something still moving to stay
+     fixed on, so the gaze samples collected across the window are of someone
+     actually looking at the target rather than at where it used to be. */
+  .target .hold { position: absolute; inset: -10px; border-radius: 50%;
+                  border: 3px solid var(--accent); opacity: 0;
+                  transform: scale(1); pointer-events: none; }
+  .target.validating .hold { border-color: var(--ok); }
+  .target.holding .hold { opacity: .95;
+                          animation: implode var(--hold-ms, 500ms)
+                                     cubic-bezier(.3,0,.5,1) forwards; }
+  .target.holding::after { transform: scale(1.25); }
+  .target::after { transition: transform .18s ease; }
+  @keyframes implode {
+    from { transform: scale(1);   opacity: .95; }
+    to   { transform: scale(.34); opacity: 1; }
+  }
   .target .pulse { position: absolute; inset: -6px; border-radius: 50%;
                    border: 2px solid var(--accent); animation: pulse 1.4s ease-out infinite; }
   @keyframes pulse { from { transform: scale(.85); opacity: .7 } to { transform: scale(1.25); opacity: 0 } }
@@ -174,7 +192,7 @@
       <img id="vphoto" alt="">
     </div>
   </div>
-  <div class="target hidden" id="target"><div class="pulse"></div></div>
+  <div class="target hidden" id="target"><div class="pulse"></div><div class="hold"></div></div>
   <div class="progress" id="progress"></div>
 
   <div class="overlay" id="overlay">
@@ -214,8 +232,8 @@
 
 <script type="module">
 import { createTracker, STATUS, describeError } from '/static/gaze/tracker.js';
-import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS, applyFit }
-  from '/static/gaze/calibration.js';
+import { Calibration, PHASE, CALIB_POINTS, VALIDATION_POINTS, applyFit,
+         HOLD_MS } from '/static/gaze/calibration.js';
 import { deviceInfo } from '/static/device.js';
 import { track as trackViewport, viewport, onChange as onViewportChange,
          isHandset } from '/static/gaze/viewport.js';
@@ -511,17 +529,80 @@ async function begin() {
     },
   });
 
-  // Tapping anywhere counts — a participant aiming at a 64px target while
-  // also holding their gaze on it will miss, and a missed tap that does
-  // nothing reads as the app being broken.
+  // Confirming a point.
+  //
+  // Touching anywhere counts, not just the dot: a participant aiming a
+  // finger at a 44px target while also holding their gaze on it will miss,
+  // the eye follows the finger, and a missed tap that does nothing reads as
+  // the app being broken.
+  //
+  // Two rules, and the first one is a bug fix. A confirmation requires the
+  // pointer to have been RELEASED since the last one. Some devices re-fire
+  // pointerdown during a single continuous press, and the validation loop
+  // has no await between points, so one long touch walked the entire
+  // validation set in about thirty milliseconds — every point scored against
+  // zero gaze samples, and the result reported as a calibration. One press
+  // is now one confirmation no matter how many events it generates.
+  //
+  // The second is the gesture itself, on handsets. Hold, and the dot
+  // implodes over HOLD_MS; the gaze is averaged across that whole window
+  // instead of sampled at the single instant a thumb happened to land.
+  // Release early, or look away, and it springs back with nothing recorded.
+  // Desktop keeps the immediate click — the accuracy problem is a thumb on a
+  // phone, and a pointing device that already works does not need the cure.
   if (!window._tapBound) {
     window._tapBound = true;
-    $('cal').addEventListener('pointerdown', (e) => {
-      if (!$('overlay').classList.contains('hidden')) return;
-      e.preventDefault();
+    const cal = $('cal');
+    const hold = isHandset();
+    let armed = true;        // false until the pointer is released again
+    let holdTimer = null;
+    let holdingId = null;
+
+    const endHold = () => {
+      clearTimeout(holdTimer);
+      holdTimer = null;
+      holdingId = null;
+      $('target').classList.remove('holding');
+    };
+
+    const confirm = (e) => {
+      armed = false;
       acknowledgeTap(e);
       if (calib) calib.tap();
+    };
+
+    cal.addEventListener('pointerdown', (e) => {
+      if (!$('overlay').classList.contains('hidden')) return;
+      e.preventDefault();
+      if (!armed) return;              // still the same press
+      if (!hold) { confirm(e); return; }
+
+      holdingId = e.pointerId;
+      const t = $('target');
+      t.style.setProperty('--hold-ms', HOLD_MS + 'ms');
+      t.classList.add('holding');
+      holdTimer = setTimeout(() => { endHold(); confirm(e); }, HOLD_MS);
     });
+
+    // Any end of the press re-arms, whether it completed or not. pointercancel
+    // matters as much as pointerup: the browser sends it when it decides the
+    // touch was a gesture, and without handling it the screen stays stuck
+    // disarmed and the participant taps at a dead page.
+    const release = (e) => {
+      if (holdingId != null && e.pointerId !== holdingId) return;
+      endHold();
+      armed = true;
+    };
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(
+      (ev) => cal.addEventListener(ev, release));
+
+    // A finger that wanders off the target is no longer looking at it.
+    cal.addEventListener('pointermove', (e) => {
+      if (holdingId == null || e.pointerId !== holdingId) return;
+      if (Math.hypot(e.movementX || 0, e.movementY || 0) > 24) endHold();
+    });
+
+    window._calHold = { hold, endHold };
   }
 
   // Live face indicator, so a stall is visible while it is happening rather

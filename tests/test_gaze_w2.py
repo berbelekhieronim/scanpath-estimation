@@ -438,3 +438,84 @@ def test_only_the_shared_component_is_removed():
     src = (STATIC / "gaze" / "calibration.js").read_text()
     body = _method_body(src, "  bias() {")
     assert "/ pts.length" in body
+
+
+# --- one press is one confirmation ----------------------------------------
+#
+# The bug: some devices re-fire pointerdown during a single continuous press.
+# The validation loop has no await between points (_recentPoint is
+# synchronous), so each event landed on a freshly armed _resolveTap and one
+# long touch walked the whole validation set in about thirty milliseconds.
+# Every point scored against zero gaze samples, and the run reported itself
+# as a completed calibration. Reproduced in a browser before this was written:
+# 8 events, 3 validation points burned, phase straight to done.
+
+def test_the_model_refuses_confirmations_faster_than_a_person():
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "export const MIN_TAP_GAP_MS" in src
+    # The guard has to be inside tap(), not at the call site: the call site
+    # is a page that can be rebound or duplicated, and this must hold anyway.
+    body = src[src.index("  tap() {"):]
+    body = body[:body.index("\n  }")]
+    assert "minTapGapMs" in body
+    assert "tapsRejected" in body
+
+
+def test_refused_confirmations_are_counted_not_swallowed():
+    """A run full of refusals means the device is misbehaving. Silently
+    dropping them would hide exactly the fault this exists to catch."""
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    assert "this.tapsRejected = 0" in src
+
+
+def test_a_confirmation_requires_the_pointer_to_have_been_released():
+    """The page-level half. However many events one press generates, it is
+    one confirmation, because the next needs a release first."""
+    page = (STATIC / "calibrate.html").read_text()
+    block = page[page.index("if (!window._tapBound)"):]
+    assert "armed" in block
+    assert "if (!armed) return;" in block
+    # pointercancel especially: the browser sends it when it reclassifies a
+    # touch as a gesture. Without it the screen stays disarmed for good and
+    # the participant taps at a page that has stopped responding.
+    for ev in ("pointerup", "pointercancel", "pointerleave"):
+        assert ev in block, ev
+
+
+def test_the_calibration_surface_does_not_pan():
+    """touch-action: manipulation still allows panning, and a held finger
+    that drifts starts one — the cancel-and-redown churn that follows is
+    what fed the burst. Nothing on this screen scrolls."""
+    assert "touch-action: none" in (STATIC / "calibrate.html").read_text()
+
+
+# --- hold to confirm, on handsets -----------------------------------------
+
+def test_holding_is_what_confirms_a_point_on_a_phone():
+    page = (STATIC / "calibrate.html").read_text()
+    assert "HOLD_MS" in page
+    assert "isHandset()" in page
+    block = page[page.index("if (!window._tapBound)"):]
+    # Desktop keeps the immediate click; the accuracy problem is a thumb.
+    assert "if (!hold) { confirm(e); return; }" in block
+    assert "classList.add('holding')" in block
+
+
+def test_the_hold_window_is_long_enough_to_contain_several_gaze_frames():
+    """The point of holding is that gaze is averaged over the window rather
+    than sampled at the instant a thumb landed. At the tracker's ~4 Hz a
+    window shorter than about 500 ms contains one frame, which is what it
+    was already getting."""
+    import re
+    src = (STATIC / "gaze" / "calibration.js").read_text()
+    ms = int(re.search(r"export const HOLD_MS = (\d+)", src).group(1))
+    assert ms >= 500
+
+
+def test_a_wandering_finger_cancels_the_hold():
+    """A finger that has moved off is attached to someone no longer looking
+    at the target, and recording that as a calibration point is worse than
+    recording nothing."""
+    page = (STATIC / "calibrate.html").read_text()
+    block = page[page.index("if (!window._tapBound)"):]
+    assert "pointermove" in block and "endHold()" in block

@@ -54,6 +54,20 @@ export const GAIN_LIMITS = [0.45, 2.2];
    viewport, before the point is treated as noise rather than a reading. */
 export const MAX_SPREAD = 0.25;
 
+/* Two confirmations closer together than this did not both come from a
+   person. Set at roughly the floor of deliberate human repetition: a fast
+   double-tap is about 200 ms, and confirming a target you have to look at
+   first is slower than that. Generous enough never to refuse a real
+   participant, tight enough that a device re-firing during one press cannot
+   walk the point set. */
+export const MIN_TAP_GAP_MS = 350;
+
+/* How long the participant holds before a point is taken, on a handset.
+   The window is also what the gaze is averaged over, so it has to be long
+   enough to contain several frames at the tracker's ~4 Hz — two at 500 ms,
+   which is two more than a single instant gave. */
+export const HOLD_MS = 500;
+
 /* Invert the fit: from what the tracker said back to where the eye was.
  *
  * Exported because the viewing stage has to apply exactly the same
@@ -122,6 +136,11 @@ export class Calibration {
     this.rejected = [];
     this.validation = [];
     this._resolveTap = null;
+    // See tap(). Two confirmations closer together than this did not both
+    // come from a person.
+    this.minTapGapMs = opts.minTapGapMs != null ? opts.minTapGapMs : MIN_TAP_GAP_MS;
+    this._lastTapAt = -Infinity;
+    this.tapsRejected = 0;
 
     this.memoryPeak = null;
     this.memoryFreed = null;
@@ -147,9 +166,33 @@ export class Calibration {
     this.onPhase(phase, info);
   }
 
-  /** The page calls this when the participant taps the shown target. */
+  /** The page calls this when the participant confirms the shown target.
+   *
+   * Rate-limited, and that is not belt-and-braces. The validation loop has
+   * no await between points — _recentPoint() is synchronous — so once a
+   * confirmation resolves, everything up to the next _awaitTap() runs in the
+   * same microtask drain and the next point is armed immediately. A device
+   * that re-fires pointerdown during one continuous press therefore walked
+   * the whole validation set in about thirty milliseconds, scoring every
+   * point against ZERO gaze samples and reporting the result as a
+   * calibration. The accuracy gate the entire condition depends on was being
+   * computed from nothing, and it looked like a pass.
+   *
+   * No human confirms two targets a few milliseconds apart. Anything that
+   * fast is the device talking, not the participant, so it is refused and
+   * counted — a run full of refusals is diagnostic, not silent.
+   */
   tap() {
-    if (this._resolveTap) { this._resolveTap(); this._resolveTap = null; }
+    const now = performance.now();
+    if (now - this._lastTapAt < this.minTapGapMs) {
+      this.tapsRejected++;
+      return false;
+    }
+    if (!this._resolveTap) return false;
+    this._lastTapAt = now;
+    this._resolveTap();
+    this._resolveTap = null;
+    return true;
   }
 
   _awaitTap() {

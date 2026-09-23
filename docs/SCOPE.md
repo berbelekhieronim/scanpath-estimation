@@ -86,7 +86,7 @@ comparison in §2.4 needs.
 Sized S (an afternoon), M (a day or two), L (a week-ish). "Blocked on" means
 a decision is needed before starting.
 
-### 2.1 Calibration: tap-and-hold with a shrink-to-confirm — M
+### 2.1 Calibration: tap-and-hold with a shrink-to-confirm — DONE
 
 Today calibration asks the participant to look at a dot and tap it. Two
 things go wrong. Aiming a finger at a 64px target pulls the eyes to the
@@ -104,7 +104,7 @@ Why it should be better: more samples per point, no finger for the eye to
 chase, and an explicit "hold your gaze" instruction the interaction enforces
 instead of just stating.
 
-**Decided:** handsets only. Desktop keeps click-the-dot — the accuracy
+**Built.** Handsets only. Desktop keeps click-the-dot — the accuracy
 problem is a thumb on a phone, and one interaction that works does not need
 replacing to match one that is being fixed. No rehearsal animation before
 Start for now; if the first calibration point turns out to be reliably the
@@ -327,6 +327,26 @@ file, and `start` launched a second server against a port the first still
 held — so the *old* process kept serving, running whatever code it imported
 at boot. That is the entire "stale server" family of bugs. The port is the
 source of truth now.
+
+### 3.12 Trusting that one press produces one pointerdown
+
+**Was:** `calibrate.html` called `calib.tap()` straight from every
+`pointerdown`, with no notion of the pointer being released in between.
+
+**Why it went:** some devices re-fire `pointerdown` during a single
+continuous press. The validation loop has no `await` between points —
+`_recentPoint()` is synchronous — so each event landed on a freshly armed
+`_resolveTap`, and one long touch walked the whole validation set in about
+thirty milliseconds. Every point scored against **zero** gaze samples, and
+the run reported itself as a completed calibration: the accuracy gate the
+entire eye-tracked condition depends on, computed from nothing, presenting
+as a pass.
+
+Fixed in two independent places on purpose. The page requires a release
+between confirmations, so one press is one confirmation whatever the device
+emits. `Calibration.tap()` separately refuses anything inside
+`MIN_TAP_GAP_MS` and counts the refusals, because the page is the part that
+can be rebound or duplicated and the model has to hold anyway.
 
 ### 3.11 One tiled link per page on the start page
 
