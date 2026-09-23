@@ -104,9 +104,11 @@ Why it should be better: more samples per point, no finger for the eye to
 chase, and an explicit "hold your gaze" instruction the interaction enforces
 instead of just stating.
 
-**Blocked on:** whether the hold gesture is also demonstrated before Start
-(the user suggested an animation where the participant chooses to begin) —
-see Q1.
+**Decided:** handsets only. Desktop keeps click-the-dot — the accuracy
+problem is a thumb on a phone, and one interaction that works does not need
+replacing to match one that is being fixed. No rehearsal animation before
+Start for now; if the first calibration point turns out to be reliably the
+worst one, that is the evidence for adding it.
 
 ### 2.2 The validity threshold — S to decide, M to implement
 
@@ -123,9 +125,17 @@ database, two of eleven sessions lost 73% and 35% of their samples that way.
 sitting with a real eye behind it. Setting a threshold from that data would
 be fitting to a simulation.
 
-The unblocking step is small: run one real round, export it from `/rounds`,
-and tune against that. See Q2, which also asks what "a higher threshold for
-the model" means — it has two readings and they lead to different work.
+**Decided:** the work is to *stop discarding off-image gaze*, not to raise
+the calibration gate. Today a sample that lands off the picture is dropped
+from the analysis, so a participant who spent a third of the window looking
+at the letterboxing contributes a third less weight than one who did not —
+which is a measurement artefact wearing the costume of a preference.
+
+The shape: keep off-image samples as an explicit "attention off the picture"
+quantity per participant, report it, and stop letting it silently thin the
+density map. Whether a session with a very high off-image fraction should
+then be excluded *is* a threshold question, and that one still needs a real
+round to set.
 
 ### 2.3 Display toggles on the display; controls as run setup — M
 
@@ -138,8 +148,11 @@ full-screen layer so they stay usable mid-demo, and `/control` becomes run
 setup only — image, task, fixation count, viewing time, round management.
 The legend shrinks to short descriptions of the items rather than a key.
 
-**Blocked on:** the projected screen is visible to the audience, so controls
-on it are visible too. See Q3.
+**Decided:** the controls hide themselves. They fade in on pointer movement
+or a key press and fade out after a few seconds, the way video player chrome
+does — invisible to the audience in normal use, instantly reachable when the
+presenter's own laptop is driving the projector. An always-visible strip
+would be simpler and would sit on screen for the whole talk.
 
 ### 2.4 Round-to-round comparison — M
 
@@ -188,8 +201,12 @@ On the charts this wants animation — the three bins played in sequence
 rather than shown as three static panels — because the thing being shown is
 a trajectory.
 
-**Blocked on:** the viewing window is a trade against the model prompt, not
-a free parameter. See Q4.
+**Decided: the window stays at five seconds and the analysis uses three
+bins.** That works with what the tracker already produces and keeps the
+humans as close to the model's three-second prompt as the frame rate allows.
+Eight seconds would buy a fourth bin and cost a caveat — the humans looking
+for nearly three times what the model was asked about — which is not worth
+a bin.
 
 ### 2.6 A model run for the car search — M, next release
 
