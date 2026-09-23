@@ -12,9 +12,29 @@ resulting URL as text so a wrong guess is visible rather than silent.
 import os
 from typing import Optional
 
+_DEFAULT_PORT = 8000
 
-def codespace_url(port: int = 8000) -> Optional[str]:
+
+def app_port() -> int:
+    """Return the port this app is configured to bind to."""
+    value = os.environ.get("PORT") or os.environ.get("SCANPATH_PORT") or _DEFAULT_PORT
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_PORT
+
+
+def _request_port(request_base_url: str) -> Optional[int]:
+    """Extract a port number from a request URL when present."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(str(request_base_url))
+    return parsed.port
+
+
+def codespace_url(port: Optional[int] = None) -> Optional[str]:
     """Reconstruct the public forwarded-port URL inside a Codespace."""
+    port = app_port() if port is None else port
     name = os.environ.get("CODESPACE_NAME")
     domain = os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN")
     if name and domain:
@@ -22,7 +42,7 @@ def codespace_url(port: int = 8000) -> Optional[str]:
     return None
 
 
-def public_base_url(request_base_url: str, port: int = 8000) -> dict:
+def public_base_url(request_base_url: str, port: Optional[int] = None) -> dict:
     """Return the participant-facing base URL and where it came from.
 
     Order: an explicit override, then Codespaces environment, then whatever
@@ -32,9 +52,11 @@ def public_base_url(request_base_url: str, port: int = 8000) -> dict:
     if override:
         return {"url": override.rstrip("/"), "source": "SCANPATH_PUBLIC_URL"}
 
-    cs = codespace_url(port)
-    if cs:
-        return {"url": cs, "source": "codespace"}
+    if os.environ.get("CODESPACE_NAME") and os.environ.get("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN"):
+        port = port or _request_port(request_base_url) or app_port()
+        cs = codespace_url(port)
+        if cs:
+            return {"url": cs, "source": "codespace"}
 
     return {"url": str(request_base_url).rstrip("/"), "source": "request"}
 

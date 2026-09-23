@@ -275,11 +275,12 @@ def api_status(request: Request):
                     "press Rescan in Admin.",
         })
     if not reachable:
+        port_hint = urls.app_port()
         warnings.append({
             "level": "error",
             "text": f"The join address ({join['url']}) only works on this "
-                    f"machine. In a Codespace, set port 8000 to Public in the "
-                    f"Ports panel.",
+                    f"machine. In a Codespace, set port {port_hint} to Public "
+                    f"in the Ports panel.",
         })
     if synthetic:
         warnings.append({
