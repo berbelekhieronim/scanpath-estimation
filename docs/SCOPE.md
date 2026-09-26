@@ -84,9 +84,13 @@ comparison in §2.4 needs.
 ## 2. Queued
 
 Sized S (an afternoon), M (a day or two), L (a week-ish). "Blocked on" means
-a decision is needed before starting.
+a decision is needed before starting; "Decided" means the question was put
+to the user and answered, so the item is unblocked but not yet built.
 
-### 2.1 Calibration: tap-and-hold with a shrink-to-confirm — DONE
+As of this writing **one of the six is shipped** (2.1). The other five are
+decided or scoped and none of them is started.
+
+### 2.1 Calibration: tap-and-hold with a shrink-to-confirm — SHIPPED
 
 Today calibration asks the participant to look at a dot and tap it. Two
 things go wrong. Aiming a finger at a 64px target pulls the eyes to the
@@ -334,6 +338,14 @@ held — so the *old* process kept serving, running whatever code it imported
 at boot. That is the entire "stale server" family of bugs. The port is the
 source of truth now.
 
+### 3.11 One tiled link per page on the start page
+
+**Was:** three groups of tiles linking to every page.
+
+**Why it went:** the top nav already reaches all of them. What is left on the
+start page is what a nav bar cannot do — join QR codes, health checks,
+diagnostics.
+
 ### 3.12 Trusting that one press produces one pointerdown
 
 **Was:** `calibrate.html` called `calib.tap()` straight from every
@@ -379,11 +391,3 @@ build if one comes back.
 is tested in Chromium and presented on iPhones. A Chromium pass is not
 evidence about Safari, and CSS that silently degrades rather than erroring
 is exactly the class of bug that survives to the room.
-
-### 3.11 One tiled link per page on the start page
-
-**Was:** three groups of tiles linking to every page.
-
-**Why it went:** the top nav already reaches all of them. What is left on the
-start page is what a nav bar cannot do — join QR codes, health checks,
-diagnostics.
