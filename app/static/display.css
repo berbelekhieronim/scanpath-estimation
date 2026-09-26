@@ -269,3 +269,52 @@ body.has-experimental .display { padding-bottom: 40px; }
   position: absolute; inset: 0; z-index: 4; pointer-events: none;
 }
 #grid svg { width: 100%; height: 100%; display: block; }
+
+/* ---------- the presenter's own controls, on the projected screen ----------
+ *
+ * The toggles used to live only on /control, which meant driving the
+ * projected screen from a second device — and once a full-screen layer was
+ * up (charts, raw JSON) there was no way back without picking that device up
+ * again. Mid-demo that is the difference between a point landing and a pause.
+ *
+ * This screen is the audience's, so the controls behave like video player
+ * chrome: absent until the presenter moves the pointer or presses a key,
+ * then gone again a few seconds later. Nobody in the room ever sees them
+ * unless they are being used.
+ */
+.deck {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+  /* Above everything, and that is the entire point. The charts overlay is
+     z-index 55 and the raw JSON one 60; at 40 the deck was painted
+     underneath them and its buttons were unclickable the moment a
+     full-screen layer went up — which is precisely the situation it exists
+     to get out of. Anything added above this number reintroduces the bug. */
+  z-index: 100; display: flex; gap: 6px; flex-wrap: wrap;
+  justify-content: center; max-width: min(96vw, 1100px);
+  padding: 9px 11px; border-radius: 13px;
+  background: rgba(14, 15, 22, .88); border: 1px solid rgba(255,255,255,.14);
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  box-shadow: 0 10px 34px rgba(0,0,0,.45);
+  opacity: 0; pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+}
+.deck.show { opacity: 1; pointer-events: auto; transform: translateX(-50%); }
+.deck button {
+  font: inherit; font-size: .8125rem; line-height: 1;
+  padding: 8px 11px; border-radius: 8px; cursor: pointer;
+  color: #e8e9ef; background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.16);
+}
+.deck button:hover { background: rgba(255,255,255,.14); }
+.deck button.on {
+  background: #5b8cff; border-color: #5b8cff; color: #fff; font-weight: 600;
+}
+/* The two that replace the whole screen are separated, because turning one
+   on turns the other off and that should not look like a coincidence. */
+.deck .sep {
+  width: 1px; align-self: stretch; margin: 0 4px;
+  background: rgba(255,255,255,.18);
+}
+.deck .hint { color: #9a9fb5; font-size: .6875rem; align-self: center;
+              padding: 0 4px; }
+@media (prefers-reduced-motion: reduce) { .deck { transition: none; } }

@@ -125,6 +125,78 @@ Chromium suite.
 
 ---
 
+## D-bis. The layer bar on the display (new)
+
+18a. **It is invisible at rest.** Load `/display` and leave the mouse alone.
+     **Pass:** no controls anywhere. This is the audience's screen and a
+     control strip parked on it is in the photograph of the talk.
+
+18b. **It wakes and sleeps.** Move the mouse. The bar appears at the bottom;
+     stop moving and it goes after ~3s. Resting the pointer *on* it keeps it
+     up — otherwise it vanishes under the hand reaching for the next toggle.
+
+18c. **It works from inside a full-screen layer — the one that matters.**
+     Turn on Charts. Now move the mouse and turn Charts off again *without
+     touching another device*. **Pass:** it works. **Fail:** the bar is
+     behind the charts and unclickable, which is the bug this was built to
+     fix and which the first build had.
+
+18d. **Opened without a token.** Open `/display` directly (no `?k=`) in a
+     browser that has never opened `/control`. The buttons should say
+     "needs token" rather than failing silently. Reaching it from the nav or
+     from Controls carries the token automatically.
+
+18e. **Controls is run setup only.** `/control` has no layer toggles left —
+     just a pointer to the display.
+
+---
+
+## E-bis. Time and rounds on /charts (new)
+
+**Rounds**
+
+E1. **The picker names rounds usefully.** Each entry shows date, image, task,
+    fixation count, viewing time and participant counts. **Fail:** two rounds
+    distinguishable only by timestamp — that is the pair most likely to be
+    compared by mistake.
+
+E2. **A past round loads.** Pick a closed round. The panels, matrix and
+    difference maps all change to that sitting.
+
+E3. **A past round uses its own model run.** Collect a round at 5 fixations,
+    start a new round, switch the model to 10, then reopen the first round in
+    the picker. **Pass:** it still reports being compared against the 5. A
+    round compared against today's model instead of the one it was shown
+    beside is a wrong result that looks right.
+
+E4. **Comparison is opt-in.** The "Compare with" section is absent until the
+    checkbox is ticked. Untick it and it goes away again. **This must never
+    appear on /display unless deliberately turned on there.**
+
+E5. **A closed round stops auto-refreshing** but the live one keeps updating —
+    a past round re-fetching every 5s would restart the animation under you.
+
+**Time**
+
+E6. **It plays.** The "When they looked there" section animates through
+    First / Middle / Last third, with the pairwise agreement updating under
+    it. Pause works; the three labels are clickable.
+
+E7. **The scale is shared.** A bin with fewer points must look *sparser*, not
+    *stronger*. If an empty-ish bin glows as hot as a full one, the shared
+    colour scale has broken.
+
+E8. **Reduced motion.** Turn on Reduce Motion in the OS. **Pass:** it does not
+    auto-play, and the frame buttons still work.
+
+**Off-picture gaze**
+
+E9. After a round with real eye tracking, the reported off-picture fraction
+    should be plausible against what people did. If it reads 0% for everyone,
+    the samples are being filtered somewhere again.
+
+---
+
 ## E. The model run selector
 
 19. **Both runs are listed.** `/control` → Fixations. **Pass:** it is a real

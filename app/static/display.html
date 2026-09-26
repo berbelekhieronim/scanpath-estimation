@@ -34,6 +34,9 @@
   <div class="prompt-panel" id="prompt-panel" hidden></div>
   <div class="legend" id="legend"></div>
 
+  <!-- Hidden until the presenter moves the pointer. See .deck in display.css. -->
+  <div class="deck" id="deck" role="group" aria-label="Display layers"></div>
+
 </div>
 
 <script type="module">
@@ -478,25 +481,25 @@ async function renderCharts(show) {
   el.appendChild(foot);
 }
 
+/* A short name per layer that is on, not a key.
+ *
+ * It used to explain the encoding — "fewer → more", "first tap ringed pale"
+ * — which is a key, and a key is something you study. At projector distance
+ * and for a few seconds, nobody studies anything: what the room needs is to
+ * know which of these coloured things is which. The encodings are still
+ * explained, out loud and on /charts, where there is time for them. */
 function renderLegend(layers, n, run) {
   const keys = [];
-  if (layers.heatmap && n) keys.push(
-    `<span class="key"><span class="swatch heat"></span>where people said they'd look — fewer &rarr; more</span>`);
-  if (layers.paths && n) keys.push(
-    `<span class="key"><span class="swatch path"></span>individual tap orders, first tap ringed pale</span>`);
-  if (layers.gaze && n !== undefined) {
-    keys.push(`<span class="key"><span class="swatch gazeheat"></span>where a
-      different group actually looked &mdash; fewer &rarr; more</span>`);
-  }
-  if (layers.gaze_paths) {
-    keys.push(`<span class="key"><span class="swatch gaze"></span>gaze traces,
-      start ringed pale</span>`);
-  }
+  const key = (swatch, text) =>
+    `<span class="key"><span class="swatch ${swatch}"></span>${text}</span>`;
+
+  if (layers.heatmap && n) keys.push(key('heat', 'Tapped &mdash; predicted'));
+  if (layers.paths && n) keys.push(key('path', 'Tap order'));
+  if (layers.gaze && n !== undefined) keys.push(key('gazeheat', 'Measured &mdash; eye tracked'));
+  if (layers.gaze_paths) keys.push(key('gaze', 'Gaze traces'));
   if (layers.model && run) {
     const extra = (run.samples_norm || []).length - 1;
-    keys.push(`<span class="key"><span class="swatch model"></span>model prediction` +
-      (extra > 0 ? `, numbered, with ${extra} more sampled observers` : ', numbered') +
-      `</span>`);
+    keys.push(key('model', 'Model' + (extra > 0 ? ` &mdash; ${extra + 1} observers` : '')));
   }
   $('legend').innerHTML = keys.join('');
 }
@@ -570,6 +573,7 @@ async function tick() {
   renderTallies(state, data, gaze);
   renderExplain(state, data, gaze, model.run);
 
+  paintDeck(state.layers);
   renderJson(state.layers.json);
   renderCharts(state.layers.charts);
   renderGrid(state.layers.grid, state.grid_source || 'tapped', state);
@@ -597,6 +601,114 @@ window.addEventListener('resize', () => {
 });
 
 $('photo').addEventListener('load', () => { lastSignature = ''; tick(); });
+
+/* ---------- the deck ----------
+ *
+ * Layer toggles, on the screen they affect. They used to exist only on
+ * /control, so changing what the room was looking at meant picking up a
+ * second device — and once charts or raw JSON had taken over the screen,
+ * there was no way out of them from here at all.
+ *
+ * Hidden by default because this is the audience's screen. It wakes on
+ * pointer movement or a key and goes away again, like video player chrome.
+ */
+const DECK = [
+  {key: 'grid',       label: 'Grid'},
+  {key: 'heatmap',    label: 'Tapped heat'},
+  {key: 'paths',      label: 'Tapped paths'},
+  {key: 'gaze',       label: 'Gaze heat'},
+  {key: 'gaze_paths', label: 'Gaze paths'},
+  {key: 'model',      label: 'Model'},
+  {key: 'prompt',     label: 'Prompt'},
+  {sep: true},
+  {key: 'charts',     label: 'Charts'},
+  {key: 'json',       label: 'Raw JSON'},
+];
+
+const TOKEN_KEY = 'scanpath_control_token';
+function deckToken() {
+  try {
+    return new URLSearchParams(location.search).get('k')
+      || localStorage.getItem(TOKEN_KEY) || '';
+  } catch { return new URLSearchParams(location.search).get('k') || ''; }
+}
+
+let deckTimer = null;
+let deckLayers = {};
+
+function buildDeck() {
+  const host = $('deck');
+  if (host.children.length) return;
+  DECK.forEach((item) => {
+    if (item.sep) {
+      const s = document.createElement('span');
+      s.className = 'sep';
+      host.appendChild(s);
+      return;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.key = item.key;
+    b.textContent = item.label;
+    b.setAttribute('role', 'switch');
+    b.addEventListener('click', async () => {
+      wakeDeck();
+      const next = !deckLayers[item.key];
+      // Optimistic, so the button responds at once; tick() corrects it if
+      // the server disagreed. A control that lags two seconds behind the
+      // press gets pressed twice.
+      deckLayers[item.key] = next;
+      paintDeck(deckLayers);
+      try {
+        const r = await fetch('/api/control/layers', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json',
+                    'X-Control-Token': deckToken()},
+          body: JSON.stringify({[item.key]: next}),
+        });
+        if (r.ok) { deckLayers = (await r.json()).layers; paintDeck(deckLayers); }
+        else if (r.status === 403) {
+          b.textContent = 'needs token';
+          setTimeout(() => { b.textContent = item.label; }, 1600);
+        }
+      } catch {}
+      lastSignature = '';
+      tick();
+    });
+    host.appendChild(b);
+  });
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = 'move the mouse to show';
+  host.appendChild(hint);
+}
+
+function paintDeck(layers) {
+  deckLayers = layers || {};
+  $('deck').querySelectorAll('button[data-key]').forEach((b) => {
+    const on = !!deckLayers[b.dataset.key];
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+}
+
+function wakeDeck() {
+  $('deck').classList.add('show');
+  clearTimeout(deckTimer);
+  deckTimer = setTimeout(() => $('deck').classList.remove('show'), 2800);
+}
+
+['pointermove', 'pointerdown', 'keydown'].forEach(
+  (ev) => window.addEventListener(ev, wakeDeck, {passive: true}));
+// Keep it up while the pointer is actually on it, or it vanishes under the
+// hand reaching for the second toggle.
+$('deck').addEventListener('pointerenter', () => {
+  clearTimeout(deckTimer);
+  $('deck').classList.add('show');
+});
+$('deck').addEventListener('pointerleave', wakeDeck);
+
+buildDeck();
 
 tick();
 setInterval(tick, 2000);

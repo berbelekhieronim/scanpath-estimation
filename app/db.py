@@ -586,15 +586,28 @@ def latest_gaze_session_for(participant_uuid: str) -> Optional[dict]:
 
 
 def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
-    """Pooled on-image gaze for a round, plus per-session paths.
+    """Gaze for a round: the on-picture paths, and what was left off them.
 
     Excluded sessions are left out by default but still counted, because the
     exclusion rate is part of what gets reported (spec 5.1).
+
+    Off-picture samples used to be filtered out in SQL, which made them
+    invisible to everything downstream. They are not noise. A sample with a
+    null coordinate is a real reading of someone looking at the letterboxing,
+    the bezel or the room, and in development some sessions lost 35-73% of
+    their data that way without a single number anywhere saying so.
+
+    They cannot go on the map — there is no coordinate to place — so what
+    changes is that they are counted and returned rather than dropped. Two
+    things then become possible: reporting how much of a round's looking
+    happened off the picture at all, and knowing how few points a
+    participant's map actually rests on, which is what tells the analysis
+    that map is a rougher estimate than a full one.
     """
-    sql = ("SELECT s.session_id, s.t_ms, s.x, s.y, g.mean_error, "
+    sql = ("SELECT s.session_id, s.t_ms, s.x, s.y, s.on_image, g.mean_error, "
            "g.diagnostics_json FROM gaze_samples s "
            "JOIN gaze_sessions g ON g.id = s.session_id "
-           "WHERE g.round_id = ? AND s.on_image = 1")
+           "WHERE g.round_id = ?")
     if not include_excluded:
         sql += " AND g.excluded = 0"
     sql += " ORDER BY s.session_id, s.t_ms"
@@ -611,9 +624,12 @@ def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
     paths: dict = {}
     errors: dict = {}
     intervals: dict = {}
+    off: dict = {}
+    total: dict = {}
     for r in rows:
         sid = r["session_id"]
-        paths.setdefault(sid, []).append([r["x"], r["y"]])
+        total[sid] = total.get(sid, 0) + 1
+        off.setdefault(sid, 0)
         if sid not in errors:
             # What this participant's own calibration measured about itself,
             # after correction. The analysis blurs each map only as far as the
@@ -624,18 +640,40 @@ def round_gaze_points(round_id: int, include_excluded: bool = False) -> dict:
             except Exception:
                 diag = {}
             errors[sid] = diag.get("residual_error") or r["mean_error"]
+        if not r["on_image"] or r["x"] is None or r["y"] is None:
+            off[sid] += 1
+            continue
+        paths.setdefault(sid, []).append([r["x"], r["y"]])
         intervals.setdefault(sid, []).append(r["t_ms"])
 
-    ordered_ids = list(paths)
+    # A session that produced samples but none on the picture is reported,
+    # not silently absent. It has no map to contribute and that is worth
+    # seeing: it usually means the calibration drifted off the screen.
+    ordered_ids = [i for i in total if paths.get(i)]
+    blind = [i for i in total if not paths.get(i)]
     ordered = [paths[i] for i in ordered_ids]
+
+    off_total = sum(off.values())
+    n_total = sum(total.values())
     return {
         "paths": ordered,
         "errors": [errors.get(i) for i in ordered_ids],
         "sample_times": [intervals[i] for i in ordered_ids],
+        # How many on-picture points each returned map rests on. A map built
+        # from four points is a rougher estimate than one built from
+        # eighteen, and nothing downstream could tell before.
+        "counts": [len(paths[i]) for i in ordered_ids],
+        "off_image": [off.get(i, 0) for i in ordered_ids],
         "points": [p for path in ordered for p in path],
         "contributors": len(ordered),
         "sessions": counts["sessions"] or 0,
         "excluded": counts["excluded"] or 0,
+        # Round-level, for reporting. off_image_fraction is of every sample
+        # recorded, not of the ones that survived.
+        "samples_total": n_total,
+        "samples_off_image": off_total,
+        "off_image_fraction": (off_total / n_total) if n_total else None,
+        "no_on_image_sessions": len(blind),
     }
 
 

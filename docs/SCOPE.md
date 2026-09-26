@@ -87,8 +87,9 @@ Sized S (an afternoon), M (a day or two), L (a week-ish). "Blocked on" means
 a decision is needed before starting; "Decided" means the question was put
 to the user and answered, so the item is unblocked but not yet built.
 
-As of this writing **one of the six is shipped** (2.1). The other five are
-decided or scoped and none of them is started.
+As of this writing **five of the six are shipped**. The one left is 2.6,
+the car-search model run, which is an evening of GPU time rather than a
+piece of code.
 
 ### 2.1 Calibration: tap-and-hold with a shrink-to-confirm — SHIPPED
 
@@ -120,7 +121,7 @@ overlay now loops the gesture at its real 500ms, which is the only way to
 teach the two things the text cannot: the finger goes somewhere that is
 *not* the dot, and the press is held rather than tapped.
 
-### 2.2 The validity threshold — S to decide, M to implement
+### 2.2 The validity threshold — SHIPPED
 
 Sessions are graded good / usable / poor / failed from calibration residual,
 and anything below "usable" is excluded. Separately, gaze samples landing
@@ -135,19 +136,32 @@ database, two of eleven sessions lost 73% and 35% of their samples that way.
 sitting with a real eye behind it. Setting a threshold from that data would
 be fitting to a simulation.
 
-**Decided:** the work is to *stop discarding off-image gaze*, not to raise
+**Built.** The work was to *stop discarding off-image gaze*, not to raise
 the calibration gate. Today a sample that lands off the picture is dropped
 from the analysis, so a participant who spent a third of the window looking
 at the letterboxing contributes a third less weight than one who did not —
 which is a measurement artefact wearing the costume of a preference.
 
-The shape: keep off-image samples as an explicit "attention off the picture"
-quantity per participant, report it, and stop letting it silently thin the
-density map. Whether a session with a very high off-image fraction should
-then be excluded *is* a threshold question, and that one still needs a real
-round to set.
+They were being filtered out in SQL, which made them invisible to
+everything downstream. They are counted and returned now: per participant,
+per round, as a fraction of every sample recorded rather than of the ones
+that survived. A session that produced samples but none on the picture is
+reported rather than silently absent — it has no map to contribute, and
+that fact usually means the calibration drifted off the screen.
 
-### 2.3 Display toggles on the display; controls as run setup — M
+What was tried and rejected: weighting a participant's map by how many
+points it rests on, via a k^(-1/6) sampling term in quadrature. At the
+errors this study actually sees it moves a total from 0.100 to 0.103 — a
+statistic that looks like rigour and does nothing. The shared kernel is
+already ~0.2 of image width, which smooths a four-point map into a broad
+blob on its own, and every map sums to 1 so nobody outweighs anybody. The
+note is kept in `participant_maps()` so it is not re-attempted.
+
+Still open, and still needing a real round: whether a session with a very
+high off-picture fraction should be excluded outright. That is a threshold,
+and a threshold set from test fixtures is fitted to a simulation.
+
+### 2.3 Display toggles on the display; controls as run setup — SHIPPED
 
 Today `/control` owns the layer toggles and `/display` is passive. During a
 demo that means driving the projected screen from a second device, and the
@@ -158,13 +172,25 @@ full-screen layer so they stay usable mid-demo, and `/control` becomes run
 setup only — image, task, fixation count, viewing time, round management.
 The legend shrinks to short descriptions of the items rather than a key.
 
-**Decided:** the controls hide themselves. They fade in on pointer movement
+**Built.** The controls hide themselves. They fade in on pointer movement
 or a key press and fade out after a few seconds, the way video player chrome
 does — invisible to the audience in normal use, instantly reachable when the
 presenter's own laptop is driving the projector. An always-visible strip
 would be simpler and would sit on screen for the whole talk.
 
-### 2.4 Round-to-round comparison — M
+One thing the build found that the plan did not: the bar was drawn at
+z-index 40 under overlays at 55 and 60, so its buttons were unclickable the
+moment charts or raw JSON went up — exactly the situation it exists to get
+out of. It is at 100 now, with a test asserting it stays above everything.
+`/control` no longer carries the layers at all, and its link to the display
+carries the token, or the bar there has nothing to authorise with.
+
+The legend went with it: it used to explain the encoding ("fewer → more",
+"first tap ringed pale"), which is a key, and a key is something you study.
+At projector distance nobody studies anything, so it names the layers and
+leaves the encodings to `/charts` and to the person talking.
+
+### 2.4 Round-to-round comparison — SHIPPED
 
 Rounds are now exportable, timestamped and labelled entities, so comparing
 two sittings is mostly a selection problem. Requirements from the user,
@@ -176,10 +202,17 @@ which are the right ones:
 - Rounds are selectable by date, label, and the parameters that make two
   rounds comparable at all: `n` fixations, which model run, viewing time.
 
-The round label should be generated from those parameters rather than typed,
-so two rounds are never distinguishable only by a timestamp.
+The round label is generated from those parameters rather than typed, so two
+rounds are never distinguishable only by a timestamp — a label somebody
+enters by hand is a label somebody forgets to change, and then the pair most
+likely to be compared by mistake is the pair that looks identical.
 
-### 2.5 Temporal analysis — L
+Every comparison endpoint takes `?round=`, and a named round is compared
+against **the model run it was shown beside**, not against whatever the
+control page is set to now. Getting that wrong would put last week's people
+next to this week's model and report it as a result.
+
+### 2.5 Temporal analysis — SHIPPED
 
 The one genuinely new analysis. Both sources carry order: taps have a
 sequence, gaze samples have timestamps, model fixations are numbered. Today
@@ -207,9 +240,17 @@ more loudly.
 On the model side, ten fixations splits three ways comfortably; with 25
 observers that is 75–100 points per bin.
 
-On the charts this wants animation — the three bins played in sequence
-rather than shown as three static panels — because the thing being shown is
-a trajectory.
+On the charts it is animation — the three bins played in sequence rather
+than three static panels — because the thing being shown is a trajectory,
+and a row of stills asks the viewer to assemble the motion themselves,
+which in a room nobody does. It pauses, the frames are reachable as
+buttons, and auto-play is off under `prefers-reduced-motion`.
+
+Every frame shares one colour scale across every source, or a bin that
+simply held fewer points would read as a bin where attention was stronger.
+A path shorter than the bin count leaves bins empty rather than being
+padded: inventing a fixation to fill a bin puts attention where nobody
+looked.
 
 **Decided: the window stays at five seconds and the analysis uses three
 bins.** That works with what the tracker already produces and keeps the

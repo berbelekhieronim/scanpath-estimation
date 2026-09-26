@@ -735,3 +735,199 @@ export function legendRow(data) {
   });
   return host;
 }
+
+
+/* ---------- time ----------
+ *
+ * Order is the one thing all three sources have and the density map throws
+ * away. Shown as playback rather than as three static panels because the
+ * thing being shown is a trajectory: a row of stills asks the viewer to
+ * assemble the motion themselves, and in a room nobody does.
+ *
+ * Auto-play is off under prefers-reduced-motion, and the frames stay
+ * reachable as buttons either way — an animation nobody can pause is a
+ * chart you cannot read.
+ */
+
+export function temporalPlayer(data, opts = {}) {
+  if (!data || !data.ok || !(data.frames || []).length) return null;
+
+  const wrap = document.createElement("div");
+  wrap.className = "temporal";
+
+  const sources = (data.sources || []).filter(
+    (k) => data.frames.some((f) => f.maps && f.maps[k]));
+  if (!sources.length) return null;
+
+  // One colour scale across every frame and every source, or a bin that
+  // simply had fewer points would read as a bin where attention was
+  // stronger. This is the same rule the static panels follow.
+  let max = 0;
+  data.frames.forEach((f) => sources.forEach((k) => {
+    const m = f.maps[k];
+    if (m) max = Math.max(max, ...m.cells);
+  }));
+
+  const row = document.createElement("div");
+  row.className = "temporal-row";
+  const cells = {};
+  sources.forEach((key) => {
+    const series = SERIES.find((s) => s.key === key) || {label: key};
+    const col = document.createElement("figure");
+    col.className = "temporal-col";
+    const cap = document.createElement("figcaption");
+    cap.innerHTML = `<span class="swatch" style="background:${
+      OVERLAY[key] || HEX.blue}"></span>${esc(series.label)}`;
+    col.appendChild(cap);
+    const slot = document.createElement("div");
+    slot.className = "temporal-slot";
+    data.frames.forEach((f, i) => {
+      const m = f.maps[key];
+      const holder = document.createElement("div");
+      holder.className = "temporal-frame";
+      holder.hidden = i !== 0;
+      if (m) {
+        holder.appendChild(gridSvg(m.cells, data.grid, {
+          aria: `${series.label}, ${f.label}`,
+          aspect: opts.aspect, image: opts.image, fillOpacity: 0.5,
+          colour: (v) => seqColour(v, max || 1),
+          label: () => "", hover: false, tip: () => "",
+        }));
+      } else {
+        holder.innerHTML = '<p class="temporal-empty">nothing in this part</p>';
+      }
+      slot.appendChild(holder);
+    });
+    cells[key] = slot;
+    col.appendChild(slot);
+    row.appendChild(col);
+  });
+  wrap.appendChild(row);
+
+  // What the pairs do over time, which is the actual claim: "they agree at
+  // the start and part company by the end" is a sentence this supports.
+  const agree = document.createElement("div");
+  agree.className = "temporal-agree";
+  wrap.appendChild(agree);
+
+  const bar = document.createElement("div");
+  bar.className = "temporal-bar";
+  const play = document.createElement("button");
+  play.type = "button";
+  const steps = data.frames.map((f, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "temporal-step";
+    b.textContent = f.label;
+    b.addEventListener("click", () => { stop(); show(i); });
+    return b;
+  });
+  bar.appendChild(play);
+  steps.forEach((b) => bar.appendChild(b));
+  wrap.appendChild(bar);
+
+  let at = 0, timer = null;
+  const label = (k) => (SERIES.find((s) => s.key === k) || {label: k}).label;
+
+  function show(i) {
+    at = ((i % data.frames.length) + data.frames.length) % data.frames.length;
+    sources.forEach((k) => {
+      [...cells[k].children].forEach((c, j) => { c.hidden = j !== at; });
+    });
+    steps.forEach((b, j) => b.classList.toggle("on", j === at));
+    const pairs = data.frames[at].pairs || {};
+    const rows = Object.keys(pairs).map((key) => {
+      const [a, b] = key.split("|");
+      const v = pairs[key];
+      return `<span class="tp"><span class="k">${esc(label(a))} vs ${
+        esc(label(b))}</span> <b>${v == null ? "—" : v.toFixed(2)}</b></span>`;
+    });
+    agree.innerHTML = rows.length
+      ? `<span class="tp-when">${esc(data.frames[at].label)}</span>`
+        + rows.join("")
+      : "";
+  }
+  function stop() {
+    clearInterval(timer); timer = null; play.textContent = "Play";
+    play.setAttribute("aria-pressed", "false");
+  }
+  function start() {
+    if (timer) return stop();
+    play.textContent = "Pause";
+    play.setAttribute("aria-pressed", "true");
+    timer = setInterval(() => show(at + 1), 1400);
+  }
+  play.addEventListener("click", start);
+  show(0);
+
+  const still = window.matchMedia
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (still) { stop(); } else { start(); }
+  return wrap;
+}
+
+
+/* ---------- one round against another ----------
+ *
+ * Two sittings of the same image. The question is whether they found the
+ * same thing, and the honest way to ask it is per source: the tap group
+ * from Tuesday against the tap group from Thursday, not a pooled average
+ * that hides which of them moved.
+ */
+
+export function roundComparison(a, b, opts = {}) {
+  if (!a || !b || !a.ok || !b.ok) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "roundcmp";
+
+  const shared = SERIES.map((s) => s.key).filter(
+    (k) => (a.maps || {})[k] && (b.maps || {})[k]
+        && a.maps[k].n > 0 && b.maps[k].n > 0);
+
+  if (!shared.length) {
+    wrap.innerHTML = '<p class="lede">These two rounds have no source in '
+      + 'common with data on both sides, so there is nothing to compare.</p>';
+    return wrap;
+  }
+
+  shared.forEach((key) => {
+    const series = SERIES.find((s) => s.key === key) || {label: key};
+    const r = correlate(a.maps[key].cells, b.maps[key].cells);
+    const block = document.createElement("div");
+    block.className = "diff-block";
+    block.innerHTML = `<h3>${esc(series.label)}: round ${
+      esc(String(a.round ? a.round.id : "A"))} vs round ${
+      esc(String(b.round ? b.round.id : "B"))} `
+      + `<span class="cc">r = ${r == null ? "—" : r.toFixed(2)}</span></h3>`
+      + `<p class="lede">${a.maps[key].n} and ${b.maps[key].n} participants. `
+      + `Red is where the second round looked more.</p>`;
+    const diff = a.maps[key].cells.map((v, i) => b.maps[key].cells[i] - v);
+    const lim = Math.max(...diff.map(Math.abs), 1e-6);
+    block.appendChild(gridSvg(diff, a.grid, {
+      aria: `${series.label}, second round minus first`,
+      aspect: opts.aspect, image: opts.image, fillOpacity: 0.55,
+      colour: (v) => divColour(v, lim),
+      label: () => "", hover: false, tip: () => "",
+    }));
+    wrap.appendChild(block);
+  });
+  return wrap;
+}
+
+
+/* Pearson, for comparing two rounds' maps in the browser. The server does
+   this for sources within a round; doing it here avoids a second endpoint
+   whose only job is to subtract two things the page already has. */
+function correlate(x, y) {
+  const n = Math.min(x.length, y.length);
+  if (n < 2) return null;
+  const mx = x.reduce((s, v) => s + v, 0) / n;
+  const my = y.reduce((s, v) => s + v, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = x[i] - mx, dy = y[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  if (sxx <= 0 || syy <= 0) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}

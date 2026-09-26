@@ -10,7 +10,6 @@
   .panel { display: grid; gap: 18px; }
   .section h2 { font-size: 0.8125rem; text-transform: uppercase;
     letter-spacing: .07em; color: var(--muted); margin: 0 0 10px; }
-  .toggles { display: grid; gap: 8px; }
   .toggle {
     display: flex; align-items: center; justify-content: space-between;
     gap: 14px; padding: 13px 16px; border-radius: var(--radius);
@@ -80,9 +79,16 @@
 
     <div class="card section">
       <h2>Layers</h2>
-      <div class="toggles" id="toggles"></div>
-      <div class="sub" style="margin-top:12px">
-        Hiding a layer never deletes anything.
+      <div class="sub">
+        On the display itself now. Move the mouse over the projected screen
+        and the layer bar appears; it hides again on its own. Changing what
+        the room is looking at no longer means picking up a second device,
+        and the full-screen layers &mdash; charts, raw JSON &mdash; can be
+        turned off from inside them, which from here they could not.
+      </div>
+      <div class="row" style="margin-top:12px">
+        <a class="linky" id="open-display" href="/display" target="_blank"
+           rel="noopener">Open the display &rarr;</a>
       </div>
     </div>
 
@@ -191,34 +197,6 @@ let token = localStorage.getItem(TOKEN_KEY) ||
 let state = null;
 let PROBES = [];
 
-/* Grouped by source, so the symmetry is obvious: each human condition has a
-   heatmap and a scanpath, and they can be shown side by side or alone. */
-const LAYER_GROUPS = [
-  { title: 'On the picture', layers: [
-    { key: 'grid', name: 'Attention grid', desc: 'The picture in nine parts, labelled with each part\u2019s share' },
-  ]},
-  { title: 'Tapped — predicted', layers: [
-    { key: 'heatmap', name: 'Heatmap', desc: 'Where the tap group said they would look' },
-    { key: 'paths',   name: 'Scanpaths', desc: 'Each person\u2019s tap order' },
-  ]},
-  { title: 'Measured — eye tracked', layers: [
-    { key: 'gaze',       name: 'Heatmap', desc: 'Where the camera group actually looked' },
-    { key: 'gaze_paths', name: 'Scanpaths', desc: 'Each person\u2019s path over time, start ringed' },
-  ]},
-  { title: 'Model', layers: [
-    { key: 'model', name: 'Scanpath', desc: 'DeepGaze3.5-VL prediction' },
-  ]},
-  { title: 'Overlays', layers: [
-    { key: 'prompt',   name: 'Show the prompt', desc: 'What the model was asked, in full' },
-  ]},
-  /* These two take over the whole display, so the server turns one off when
-     the other goes on. Grouped apart so that is not a surprise. */
-  { title: 'Full screen — replaces the image', layers: [
-    { key: 'charts', name: 'Comparison charts', desc: 'Tapped vs measured vs model, and the gap between them' },
-    { key: 'json',   name: 'Raw data (JSON)',   desc: 'Everything the display is drawn from' },
-  ]},
-];
-const LAYERS = LAYER_GROUPS.flatMap((g) => g.layers);
 
 function notice(msg, kind = '') {
   const el = $('notice');
@@ -237,35 +215,6 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-function renderToggles() {
-  $('toggles').innerHTML = LAYER_GROUPS.map((g) => `
-    <div style="font-size:.6875rem;text-transform:uppercase;letter-spacing:.06em;
-                color:var(--muted);margin:10px 0 2px">${g.title}</div>` +
-    g.layers.map((l) => {
-      const on = state.layers[l.key];
-      return `<div class="toggle ${on ? 'on' : ''}" data-key="${l.key}"
-                   aria-disabled="${!!l.disabled}" role="switch" aria-checked="${on}">
-          <div><div class="name">${l.name}</div><div class="desc">${l.desc}</div></div>
-          <div class="sw"></div>
-        </div>`;
-    }).join('')).join('');
-
-  $('toggles').querySelectorAll('.toggle').forEach((el) => {
-    if (el.getAttribute('aria-disabled') === 'true') return;
-    el.addEventListener('click', () => setLayer(el.dataset.key, !state.layers[el.dataset.key]));
-  });
-}
-
-async function setLayer(key, on) {
-  try {
-    const out = await api('/api/control/layers', {
-      method: 'POST', body: JSON.stringify({ [key]: on }),
-    });
-    state.layers = out.layers;
-    renderToggles();
-  } catch (e) { notice(e.message, 'err'); }
-}
-
 async function refresh() {
   try {
     const [s, m, imgs, model] = await Promise.all([
@@ -282,13 +231,6 @@ async function refresh() {
     $('subtitle').textContent = s.image
       ? `${s.image.label} · ${s.tap_count} taps each`
       : 'No image selected';
-
-    if (first || $('toggles').children.length === 0) renderToggles();
-    else LAYERS.forEach((l) => {
-      const el = $('toggles').querySelector(`[data-key="${l.key}"]`);
-      if (el) { el.classList.toggle('on', !!s.layers[l.key]);
-                el.setAttribute('aria-checked', !!s.layers[l.key]); }
-    });
 
     const sel = $('image-select');
     if (sel.options.length !== imgs.images.length) {
@@ -520,6 +462,14 @@ $('save-token').addEventListener('click', async () => {
   catch { notice('That token was not accepted.', 'err'); }
 });
 $('token').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('save-token').click(); });
+
+// The deck on the projected screen posts layer changes, so the link to it
+// carries the token. Without this, opening the display on a browser that has
+// never seen /control gives a bar whose buttons all answer "needs token".
+(function linkDisplay() {
+  const a = document.getElementById('open-display');
+  if (a && token) a.href = '/display?k=' + encodeURIComponent(token);
+})();
 
 (async function init() {
   if (token) localStorage.setItem(TOKEN_KEY, token);

@@ -575,6 +575,44 @@ def api_raw():
     }
 
 
+def _pick_round(round_id: Optional[int]) -> Optional[dict]:
+    """The round asked for, or the live one.
+
+    Every comparison endpoint used to be hard-wired to the open round, which
+    made a past sitting unreachable even though the data was right there.
+    Naming a round is what turns "the numbers from tonight" into "tonight
+    against last week".
+    """
+    if round_id is None:
+        return db.get_active_round()
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM rounds WHERE id = ?",
+                           (round_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def _round_model(round_: dict, cfg: dict) -> tuple:
+    """The model run a round should be compared against.
+
+    A round exported from an earlier sitting carries the settings it ran
+    under, so it is compared against the run it was actually shown beside —
+    not against whatever the control page happens to be set to now. Getting
+    that wrong would silently compare last week's people with this week's
+    model and report it as a result.
+    """
+    settings = rounds.settings_for(round_["id"]) if round_.get("id") else {}
+    mode = settings.get("model_mode") or cfg["mode"]
+    target = (settings.get("model_target") or None) or cfg["target"]
+    try:
+        n_fix = int(settings.get("model_n_fixations") or cfg["n_fixations"])
+    except (TypeError, ValueError):
+        n_fix = cfg["n_fixations"]
+    run = (db.get_model_run(round_["image_id"], mode, target, n_fix)
+           or db.get_model_run(round_["image_id"], mode, target))
+    used = {"mode": mode, "target": target, "n_fixations": n_fix}
+    return run, used
+
+
 def _condition_paths(round_id: int) -> dict:
     """Tap paths and gaze paths, each restricted to their assigned group."""
     tap_ids = db.participants_in_condition(round_id, "tap")
@@ -599,7 +637,18 @@ def _condition_paths(round_id: int) -> dict:
             "tap_errors": [None] * len(tap_paths),
             "gaze_errors": gaze.get("errors") or [],
             "gaze_times": gaze.get("sample_times") or [],
-            "gaze_excluded": gaze["excluded"]}
+            "gaze_excluded": gaze["excluded"],
+            # Looking that happened, off the picture. Carried through rather
+            # than filtered away in SQL, so a round can say how much of its
+            # gaze never landed on the image at all.
+            "gaze_off_image": {
+                "samples": gaze.get("samples_total") or 0,
+                "off": gaze.get("samples_off_image") or 0,
+                "fraction": gaze.get("off_image_fraction"),
+                "per_participant": gaze.get("off_image") or [],
+                "points_per_participant": gaze.get("counts") or [],
+                "no_on_image_sessions": gaze.get("no_on_image_sessions") or 0,
+            }}
 
 
 @app.get("/api/compare")
@@ -623,28 +672,32 @@ def api_compare(grid: int = 3):
     }, grid=max(2, min(5, grid)))
     result["conditions"] = db.assignment_counts(round_["id"])
     result["gaze_excluded"] = paths["gaze_excluded"]
+    result["gaze_off_image"] = paths["gaze_off_image"]
     result["model_source"] = run.get("source") if run else None
     return result
 
 
 @app.get("/api/compare/maps")
-def api_compare_maps(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT):
+def api_compare_maps(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT,
+                     round: Optional[int] = None):
     """Per-participant density maps for the three sources, on one scale.
 
     Separate from /api/compare because it answers a different question. That
     one scores agreement on pooled points; this one returns the maps the
     charts draw, each built per participant and smoothed with one shared
     kernel so the panels are actually comparable (SPEC-METRICS.md section 2).
+
+    `round` names a past sitting instead of the live one, which is what the
+    round-to-round comparison is built on.
     """
-    round_ = db.get_active_round()
+    round_ = _pick_round(round)
     if not round_:
-        return {"ok": False, "reason": "no round open"}
+        return {"ok": False, "reason": "no round open" if round is None
+                else f"no round {round}"}
 
     paths = _condition_paths(round_["id"])
     cfg = model_config()
-    run = (db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"],
-                            cfg["n_fixations"])
-           or db.get_model_run(round_["image_id"], cfg["mode"], cfg["target"]))
+    run, used = _round_model(round_, cfg)
     model_paths = (run.get("samples_norm") or [run.get("scanpath_norm")]) if run else []
 
     result = analysis.comparison_maps(
@@ -660,9 +713,56 @@ def api_compare_maps(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT):
     )
     result["image"] = db.get_image(round_["image_id"])
     result["config"] = cfg
+    # What this round was actually compared against, which is not always what
+    # the control page is set to now — see _round_model.
+    result["model_used"] = used
+    result["round"] = {"id": round_["id"], "label": round_.get("label"),
+                       "opened_at": round_.get("opened_at"),
+                       "closed_at": round_.get("closed_at")}
     result["conditions"] = db.assignment_counts(round_["id"])
     result["gaze_excluded"] = paths["gaze_excluded"]
+    result["gaze_off_image"] = paths["gaze_off_image"]
     result["model_source"] = run.get("source") if run else None
+    return result
+
+
+@app.get("/api/compare/temporal")
+def api_compare_temporal(grid: int = 3, sigma: float = analysis.SIGMA_DEFAULT,
+                         bins: int = analysis.BINS_DEFAULT,
+                         round: Optional[int] = None):
+    """The same comparison, cut into time bins.
+
+    Order is the one thing every source has and the density map throws away.
+    Split by rank rather than by clock, because the model has no clock and
+    the humans have no fixation count — what both have is a proportion
+    through their own looking.
+    """
+    round_ = _pick_round(round)
+    if not round_:
+        return {"ok": False, "reason": "no round open" if round is None
+                else f"no round {round}"}
+
+    paths = _condition_paths(round_["id"])
+    cfg = model_config()
+    run, used = _round_model(round_, cfg)
+    model_paths = (run.get("samples_norm") or [run.get("scanpath_norm")]) if run else []
+
+    result = analysis.temporal_maps(
+        {
+            "tapped": paths["tap"],
+            "measured": paths["gaze"],
+            "model": [p for p in model_paths if p],
+        },
+        n=max(2, min(5, grid)),
+        sigma=max(0.05, min(0.4, sigma)),
+        bins=max(2, min(4, bins)),
+        errors={"tapped": paths["tap_errors"],
+                "measured": paths["gaze_errors"]},
+    )
+    result["image"] = db.get_image(round_["image_id"])
+    result["model_used"] = used
+    result["round"] = {"id": round_["id"], "label": round_.get("label"),
+                       "opened_at": round_.get("opened_at")}
     return result
 
 

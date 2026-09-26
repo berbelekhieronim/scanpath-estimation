@@ -495,6 +495,17 @@ def participant_maps(paths: List[Path], n: int = 3,
     known. Given it, each map is blurred only as far as the common resolution
     rather than by a flat amount, which is what makes "one shared kernel"
     true instead of merely intended. Without it the behaviour is unchanged.
+
+    Deliberately NOT weighted by how many points a participant contributed.
+    It was tried: add a k^(-1/6) sampling term in quadrature so a four-point
+    map counts as rougher than an eighteen-point one. At the measurement
+    errors this study actually sees it moves a participant's total from
+    0.100 to 0.103, which is a statistic that looks like rigour and does
+    nothing. The shared kernel is already ~0.2 of image width, which smooths
+    a four-point map into a broad blob on its own, and each map sums to 1 so
+    nobody outweighs anybody. If sparse maps ever do need discounting it
+    should follow from measured data, not from a constant chosen to make the
+    effect visible.
     """
     out = []
     for i, p in enumerate(paths):
@@ -631,3 +642,112 @@ def comparison_maps(sources: dict, n: int = 3,
                 maps[k]["cells"]) for k in maps},
         },
     }
+
+
+# --------------------------------------------------------------------------
+# Time
+# --------------------------------------------------------------------------
+#
+# Every source carries order and until now all three threw it away. Taps have
+# a sequence, gaze samples have timestamps, model fixations are numbered, and
+# the density map collapses all of it into "where", losing "when".
+#
+# The unit that makes them comparable is RANK, not seconds. The model has no
+# clock — its fixations are first, second, third — and the humans have no
+# fixation count. What both have is a proportion through their own looking:
+# the first third of a scanpath against the first third of a viewing window.
+#
+# Three bins, and that number is set by the tracker, not by taste. At the
+# measured ~4Hz a five-second window gives about eighteen to twenty samples a
+# person, so three bins hold six or seven each. Four bins would hold four or
+# five, which is thin, and the eight-second window that would fix it widens
+# the mismatch with the model's "free viewing for 3 seconds" prompt — a
+# caveat that costs more than the extra bin is worth (SCOPE.md 2.5).
+
+BINS_DEFAULT = 3
+
+
+def split_by_rank(path: Path, bins: int = BINS_DEFAULT) -> List[Path]:
+    """Cut one path into equal-sized bins by position along it.
+
+    By rank rather than by clock so the three sources can be laid side by
+    side: a tap sequence and a gaze stream and a list of model fixations all
+    have a beginning, a middle and an end, and nothing else in common.
+
+    A path shorter than `bins` does not get padded or dropped. Its points
+    land in the bins they fall into and the empty ones stay empty, because
+    inventing a fixation to fill a bin would put attention somewhere nobody
+    looked.
+    """
+    out: List[Path] = [[] for _ in range(bins)]
+    n = len(path)
+    if not n:
+        return out
+    for i, pt in enumerate(path):
+        # i/n scaled into [0, bins); the min() guards the final point, which
+        # would otherwise land in bin `bins` and be lost.
+        out[min(bins - 1, int(i * bins / n))].append(pt)
+    return out
+
+
+def temporal_maps(sources: dict, n: int = 3, sigma: float = SIGMA_DEFAULT,
+                  bins: int = BINS_DEFAULT,
+                  errors: Optional[dict] = None) -> dict:
+    """The comparison, once per time bin, on one shared scale.
+
+    Same kernel as the untimed comparison and the same per-participant
+    weighting, so a bin can be read against the whole and against the other
+    sources. What it adds is that each source is now three maps, and the
+    pairwise correlation is computed per bin: "the model and the people agree
+    at the start and part company by the end" is a claim this can support and
+    the pooled map could not.
+    """
+    present = {k: v for k, v in sources.items() if v}
+    if not present:
+        return {"ok": False, "reason": "no data yet"}
+
+    errs = errors or {}
+    out_bins = []
+    for b in range(bins):
+        maps, kept_errors = {}, {}
+        for key, paths in present.items():
+            per_person = [split_by_rank(p, bins)[b] for p in paths]
+            src_err = errs.get(key) or []
+            # Keep each participant's own error aligned with their slice, and
+            # drop anyone who contributed nothing to this bin.
+            pairs = [(p, src_err[i] if i < len(src_err) else None)
+                     for i, p in enumerate(per_person) if p]
+            maps[key] = [p for p, _ in pairs]
+            kept_errors[key] = [e for _, e in pairs]
+
+        bin_maps = {k: group_map(v, n, sigma, kept_errors[k])
+                    for k, v in maps.items() if v}
+        pairs_cc = {}
+        labels = list(bin_maps)
+        for i, a in enumerate(labels):
+            for b2 in labels[i + 1:]:
+                pairs_cc[f"{a}|{b2}"] = correlate(bin_maps[a]["cells"],
+                                                  bin_maps[b2]["cells"])
+        out_bins.append({
+            "index": b,
+            "label": _bin_label(b, bins),
+            "maps": bin_maps,
+            "pairs": pairs_cc,
+        })
+
+    return {
+        "ok": True,
+        "grid": n,
+        "bins": bins,
+        "sigma": sigma,
+        "frames": out_bins,
+        "sources": list(present),
+    }
+
+
+def _bin_label(i: int, bins: int) -> str:
+    if bins == 3:
+        return ("First third", "Middle third", "Last third")[i]
+    if bins == 2:
+        return ("First half", "Second half")[i]
+    return f"Part {i + 1} of {bins}"

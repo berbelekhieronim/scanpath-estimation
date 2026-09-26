@@ -150,6 +150,7 @@ def list_rounds() -> list[dict]:
     for r in rows:
         t = taps.get(r["id"], (0, 0))
         g = gaze.get(r["id"], (0, 0))
+        cfg = settings_for(r["id"])
         out.append({
             "id": r["id"],
             "label": r["label"],
@@ -161,8 +162,43 @@ def list_rounds() -> list[dict]:
             "imported_from": r.get("imported_from"),
             "tappers": t[0], "markers": t[1],
             "gaze_sessions": g[0], "gaze_usable": g[1] or 0,
+            # The parameters that decide whether two rounds can be compared
+            # at all. Two sittings of the same image differing only in the
+            # model run behind them are not the same experiment, and a list
+            # that shows only a timestamp makes them look identical.
+            "params": {
+                "task": cfg.get("model_mode"),
+                "target": cfg.get("model_target") or None,
+                "n_fixations": cfg.get("model_n_fixations"),
+                "view_ms": cfg.get("view_ms"),
+                "tap_count": cfg.get("tap_count"),
+            },
+            "signature": describe_params(cfg, r["filename"]),
         })
     return out
+
+
+def describe_params(cfg: dict, filename: str = "") -> str:
+    """A short, stable name for what a round was run under.
+
+    Generated rather than typed. A label somebody enters by hand is a label
+    somebody forgets to change, and then two rounds differ only by a
+    timestamp — which is exactly the pair most likely to be compared by
+    mistake.
+    """
+    bits = []
+    if filename:
+        bits.append(filename.rsplit(".", 1)[0][:24])
+    task = cfg.get("model_mode") or "freeview"
+    target = cfg.get("model_target") or ""
+    bits.append(f"{task}:{target}" if target else task)
+    if cfg.get("model_n_fixations"):
+        bits.append(f"n{cfg['model_n_fixations']}")
+    try:
+        bits.append(f"{int(cfg.get('view_ms') or 0) / 1000:g}s")
+    except (TypeError, ValueError):
+        pass
+    return " · ".join(b for b in bits if b)
 
 
 def activate(round_id: int) -> dict:

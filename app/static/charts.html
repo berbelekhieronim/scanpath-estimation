@@ -20,6 +20,32 @@
   .banner.err { border-color: var(--danger); }
   .links a { color: var(--accent); text-decoration: none; margin-right: 18px; }
   .links a:hover { text-decoration: underline; }
+
+  .picker { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+            margin-bottom: 18px; font-size: .875rem; }
+  .picker select { max-width: 340px; }
+  .picker label { color: var(--muted); }
+  .picker .chk { display: flex; gap: 6px; align-items: center; }
+
+  .temporal-row { display: grid; gap: 14px;
+                  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+  .temporal-col { margin: 0; }
+  .temporal-col figcaption { font-size: .8125rem; margin-bottom: 6px;
+                             display: flex; align-items: center; gap: 7px; }
+  .temporal-col .swatch { width: 11px; height: 11px; border-radius: 3px;
+                          display: inline-block; }
+  .temporal-slot svg { width: 100%; height: auto; display: block; }
+  .temporal-empty { color: var(--muted); font-size: .8125rem;
+                    text-align: center; padding: 28px 0; margin: 0; }
+  .temporal-bar { display: flex; gap: 8px; flex-wrap: wrap;
+                  align-items: center; margin-top: 14px; }
+  .temporal-step.on { background: var(--surface-2); border-color: var(--accent);
+                      font-weight: 600; }
+  .temporal-agree { display: flex; gap: 16px; flex-wrap: wrap;
+                    margin-top: 12px; font-size: .8125rem; }
+  .tp-when { font-weight: 600; }
+  .temporal-agree .k { color: var(--muted); }
+  .roundcmp .cc { color: var(--muted); font-weight: 400; font-size: .875rem; }
 </style>
 </head>
 <body>
@@ -33,6 +59,16 @@
       <div class="sub" id="subtitle">Loading…</div>
     </div>
   </header>
+
+  <div class="picker" id="picker">
+    <label for="round-a">Round</label>
+    <select id="round-a"></select>
+    <span class="chk">
+      <input type="checkbox" id="cmp-on">
+      <label for="cmp-on">Compare with</label>
+    </span>
+    <select id="round-b" disabled></select>
+  </div>
 
   <div id="banners"></div>
   <div id="legend"></div>
@@ -71,6 +107,25 @@
     <div class="wide" id="diff"></div>
   </section>
 
+  <section id="temporal-section" hidden>
+    <h2>When they looked there</h2>
+    <p class="lede">The same maps, cut into three equal parts of each
+      person's own looking — the first third of a tap sequence against the
+      first third of a viewing window against the model's first fixations.
+      By position, not by clock: the model has no clock and the people have
+      no fixation count. The number under each part is how closely the pair
+      agreed <em>at that point</em>.</p>
+    <div class="wide" id="temporal"></div>
+  </section>
+
+  <section id="roundcmp-section" hidden>
+    <h2>One round against another</h2>
+    <p class="lede">Two sittings of the same picture, per source — the tap
+      group from one against the tap group from the other, rather than a
+      pooled average that would hide which of them moved.</p>
+    <div class="wide" id="roundcmp"></div>
+  </section>
+
   <section>
     <h2>The numbers</h2>
     <p class="lede">Everything above, as a table.</p>
@@ -83,6 +138,7 @@
 import {
   SERIES, densityPanels, sequentialScale, differenceMap, correlationMatrix,
   numbersTable, legendRow, interpretation, esc, MORE_IS,
+  temporalPlayer, roundComparison,
 } from '/static/charts.js';
 import { renderNav } from '/static/nav.js';
 
@@ -131,16 +187,77 @@ function renderSubtitle(d) {
     + `blur ${Math.round(d.sigma * 100)}% of width`;
 }
 
-async function load() {
-  // grid and sigma pass straight through, so ?grid=4 on this page asks the
-  // endpoint the same question. Both are clamped server-side.
+/* Which round is on screen, and whether a second one is being compared.
+ *
+ * Opt-in, and it stays opt-in: a second round appearing unbidden during a
+ * reveal is the worst possible moment for it. Nothing about the comparison
+ * reaches the projected display unless it is deliberately turned on there
+ * too — this page is the operator's, not the audience's.
+ */
+let ROUNDS = [];
+let picked = null;      // round id, or null for "the live one"
+let compareWith = null;
+
+function roundName(r) {
+  const when = r.opened_at
+    ? new Date(r.opened_at).toLocaleString(undefined,
+        {month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit'})
+    : '—';
+  const who = `${r.tappers}t/${r.gaze_usable}g`;
+  // Date AND the parameters that decide comparability. Two rounds that
+  // differ only by a timestamp are the pair most likely to be compared by
+  // mistake, so the signature is always shown.
+  return `${when} · ${r.signature || r.image} · ${who}`
+    + (r.active ? ' · live' : '');
+}
+
+async function loadRounds() {
+  try {
+    const {rounds} = await (await fetch('/api/rounds', {cache: 'no-store'})).json();
+    ROUNDS = rounds || [];
+  } catch { return; }
+  const a = $('round-a'), b = $('round-b');
+  const opts = ROUNDS.map((r) =>
+    `<option value="${r.id}">${esc(roundName(r))}</option>`).join('');
+  const live = ROUNDS.find((r) => r.active);
+  if (document.activeElement !== a) {
+    a.innerHTML = opts;
+    a.value = String(picked ?? (live ? live.id : (ROUNDS[0] || {}).id ?? ''));
+  }
+  if (document.activeElement !== b) {
+    b.innerHTML = '<option value="">—</option>' + opts;
+    b.value = compareWith == null ? '' : String(compareWith);
+  }
+}
+
+$('round-a').addEventListener('change', (e) => {
+  picked = Number(e.target.value) || null;
+  load();
+});
+$('cmp-on').addEventListener('change', (e) => {
+  $('round-b').disabled = !e.target.checked;
+  if (!e.target.checked) { compareWith = null; }
+  load();
+});
+$('round-b').addEventListener('change', (e) => {
+  compareWith = Number(e.target.value) || null;
+  load();
+});
+
+function query(extra = {}) {
   const here = new URLSearchParams(location.search);
   const q = new URLSearchParams();
   ['grid', 'sigma'].forEach((k) => { if (here.has(k)) q.set(k, here.get(k)); });
+  Object.entries(extra).forEach(([k, v]) => { if (v != null) q.set(k, v); });
+  return q.toString() ? '?' + q : '';
+}
+
+async function load() {
+  await loadRounds();
 
   let r;
   try {
-    r = await fetch('/api/compare/maps' + (q.toString() ? '?' + q : ''),
+    r = await fetch('/api/compare/maps' + query({round: picked}),
                     {cache: 'no-store'});
   } catch (e) {
     $('banners').innerHTML =
@@ -198,10 +315,48 @@ async function load() {
   }
   $('diff-section').hidden = !any;
   put('table', numbersTable(d));
+
+  await renderTemporal(scene, aspect);
+  await renderRoundComparison(d, scene, aspect);
+}
+
+async function renderTemporal(scene, aspect) {
+  let t;
+  try {
+    t = await (await fetch('/api/compare/temporal' + query({round: picked}),
+                           {cache: 'no-store'})).json();
+  } catch { $('temporal-section').hidden = true; return; }
+  const node = temporalPlayer(t, {image: scene, aspect});
+  $('temporal-section').hidden = !node;
+  put('temporal', node);
+}
+
+async function renderRoundComparison(a, scene, aspect) {
+  if (compareWith == null || compareWith === (a.round && a.round.id)) {
+    $('roundcmp-section').hidden = true;
+    put('roundcmp', null);
+    return;
+  }
+  let b;
+  try {
+    b = await (await fetch('/api/compare/maps' + query({round: compareWith}),
+                           {cache: 'no-store'})).json();
+  } catch { $('roundcmp-section').hidden = true; return; }
+  const node = roundComparison(a, b, {image: scene, aspect});
+  $('roundcmp-section').hidden = !node;
+  put('roundcmp', node);
 }
 
 load();
-setInterval(load, 5000);
+// The live round keeps filling and should refresh; a closed one does not,
+// and re-fetching it every five seconds would restart the temporal
+// animation under the viewer's hands for no reason. Keyed on whether the
+// shown round is the live one, not on whether the picker was touched —
+// choosing the live round explicitly must not stop it updating.
+setInterval(() => {
+  const live = ROUNDS.find((r) => r.active);
+  if (picked == null || (live && picked === live.id)) load();
+}, 5000);
 </script>
 </body>
 </html>
