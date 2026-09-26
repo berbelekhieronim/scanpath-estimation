@@ -55,9 +55,18 @@
                   border: 3px solid var(--accent); opacity: 0;
                   transform: scale(1); pointer-events: none; }
   .target.validating .hold { border-color: var(--ok); }
+  /* Longhands, not the shorthand. WebKit does not resolve var() inside the
+     `animation` shorthand: the duration falls back to 0s, the animation
+     never runs, and the element sits at its base style — which here is
+     opacity 0. On an iPhone that made the hold feedback invisible while the
+     hold itself (a JS timer) still fired, so the press registered and
+     nothing on screen said so. The duration is set on the element by script
+     from HOLD_MS, so there is no custom property left to go missing. */
   .target.holding .hold { opacity: .95;
-                          animation: implode var(--hold-ms, 500ms)
-                                     cubic-bezier(.3,0,.5,1) forwards; }
+                          animation-name: implode;
+                          animation-duration: 500ms;
+                          animation-timing-function: cubic-bezier(.3,0,.5,1);
+                          animation-fill-mode: forwards; }
   .target.holding::after { transform: scale(1.25); }
   .target::after { transition: transform .18s ease; }
   @keyframes implode {
@@ -117,7 +126,12 @@
    * what happens. */
   .howto { margin: 2px 0 14px; display: flex; flex-direction: column;
            align-items: center; gap: 9px; }
-  .howto-screen { --t: 2600ms; position: relative;
+  /* 2600ms spelled out rather than carried in a custom property: see the
+     note on .target.holding .hold — var() in an animation shorthand does not
+     survive WebKit. The keyframe percentages below are tied to this number,
+     and 11.5%-30.8% of it is 502ms, which is HOLD_MS. Change one, change
+     both, or the rehearsal stops matching the gesture. */
+  .howto-screen { position: relative;
                   width: 190px; height: 118px; border-radius: 13px;
                   border: 1px solid var(--border); background: var(--surface-2);
                   overflow: hidden; }
@@ -129,10 +143,10 @@
                        opacity: .45; }
   .howto-dot::after { content: ''; width: 8px; height: 8px; border-radius: 50%;
                       background: var(--accent);
-                      animation: howto-core var(--t) linear infinite; }
+                      animation: howto-core 2600ms linear infinite; }
   .howto-ring { position: absolute; inset: -7px; border-radius: 50%;
                 border: 3px solid var(--accent); opacity: 0;
-                animation: howto-ring var(--t) linear infinite; }
+                animation: howto-ring 2600ms linear infinite; }
   /* Deliberately far from the dot, and low — where a thumb actually rests.
      Dashed and soft on purpose: a second solid ring here would read as
      another thing to look at, which is the exact opposite of the lesson. */
@@ -141,7 +155,7 @@
                  border-radius: 50%; border: 2px dashed var(--muted);
                  background: rgba(154,159,181,.18); opacity: 0;
                  display: grid; place-items: center;
-                 animation: howto-thumb var(--t) linear infinite; }
+                 animation: howto-thumb 2600ms linear infinite; }
   .howto-thumb::after { content: ''; width: 15px; height: 15px;
                         border-radius: 50%; background: var(--muted);
                         opacity: .55; }
@@ -670,7 +684,9 @@ async function begin() {
 
       holdingId = e.pointerId;
       const t = $('target');
-      t.style.setProperty('--hold-ms', HOLD_MS + 'ms');
+      const ring = t.querySelector('.hold');
+      // Set as a real property, not a custom one: see the CSS note.
+      if (ring) ring.style.animationDuration = HOLD_MS + 'ms';
       t.classList.add('holding');
       holdTimer = setTimeout(() => { endHold(); confirm(e); }, HOLD_MS);
     });

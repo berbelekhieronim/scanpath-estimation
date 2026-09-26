@@ -566,3 +566,40 @@ def test_the_rehearsal_does_not_outrun_a_reduced_motion_preference():
     block = block[:block.index("\n  }") + 4]
     assert "animation: none" in block
     assert ".howto-thumb { opacity: 1" in block
+
+
+# --- var() does not survive an animation shorthand in WebKit ---------------
+
+def test_no_animation_shorthand_carries_a_custom_property():
+    """WebKit does not resolve var() inside the `animation` shorthand. The
+    duration falls back to 0s, the animation never runs, and the element
+    sits at its base style — which for anything that fades in is opacity 0.
+
+    It shipped twice in one page. The rehearsal was simply invisible on an
+    iPhone. Worse, the hold feedback was too: the hold itself is a JS timer
+    so the press still registered, and nothing on screen said so, which
+    reads as the phone ignoring you.
+
+    Nothing catches this in a Chromium test, so it is caught here instead:
+    durations go in longhands or literals, never through a var() in the
+    shorthand.
+    """
+    import re
+    offenders = []
+    for f in sorted((STATIC).rglob("*.html")) + sorted((STATIC).rglob("*.css")):
+        for m in re.finditer(r"animation:[^;{}]*;", f.read_text(), re.S):
+            if "var(" in m.group(0):
+                offenders.append(f"{f.name}: {' '.join(m.group(0).split())[:70]}")
+    assert not offenders, "var() in an animation shorthand:\n" + "\n".join(offenders)
+
+
+def test_the_hold_ring_is_given_a_real_duration_by_script():
+    """Set as a real property rather than a custom one, so there is no
+    variable left to go missing."""
+    page = (STATIC / "calibrate.html").read_text()
+    assert "ring.style.animationDuration = HOLD_MS + 'ms'" in page
+    assert "--hold-ms" not in page
+    block = page[page.index(".target.holding .hold"):]
+    block = block[:block.index("}") + 1]
+    assert "animation-name: implode" in block
+    assert "animation-duration" in block

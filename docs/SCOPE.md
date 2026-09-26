@@ -354,6 +354,32 @@ emits. `Calibration.tap()` separately refuses anything inside
 `MIN_TAP_GAP_MS` and counts the refusals, because the page is the part that
 can be rebound or duplicated and the model has to hold anyway.
 
+### 3.13 Carrying an animation's duration in a custom property
+
+**Was:** `animation: implode var(--hold-ms, 500ms) …` and three more like it,
+with the duration passed in as a CSS variable so one number drove both the
+JS timer and the CSS.
+
+**Why it went:** WebKit does not resolve `var()` inside the `animation`
+*shorthand*. The duration falls back to `0s`, the animation never runs, and
+the element sits at its base style — which, for anything that fades in, is
+`opacity: 0`.
+
+It shipped twice in one page and neither was visible from a Chromium test.
+The rehearsal was simply blank on an iPhone. The worse one was the hold
+feedback: the hold is a JS timer, so the press still registered and the ring
+never moved, which reads as the phone ignoring you — during the one
+interaction the whole eye-tracked condition depends on.
+
+Durations now go in longhands, or as literals, or are set on the element by
+script. `test_no_animation_shorthand_carries_a_custom_property` fails the
+build if one comes back.
+
+**The general lesson, which is the reason this entry exists:** this project
+is tested in Chromium and presented on iPhones. A Chromium pass is not
+evidence about Safari, and CSS that silently degrades rather than erroring
+is exactly the class of bug that survives to the room.
+
 ### 3.11 One tiled link per page on the start page
 
 **Was:** three groups of tiles linking to every page.

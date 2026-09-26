@@ -88,6 +88,24 @@ participant would, not as someone who knows what it means.**
     handsets. **Pass:** `/control` shows one assigned to each and neither
     drifts into the other's screens.
 
+### C-bis. On a real iPhone, in Safari — not a simulator
+
+Chromium cannot answer these, and both bugs below shipped past a passing
+Chromium suite.
+
+15a. **The rehearsal animates on the intro screen.** Before Start, the small
+     panel must show the finger fading in low-left and the ring imploding on
+     the dot, looping. **Fail:** a grey box with only a static dot and no
+     motion — that is a CSS feature Safari dropped silently.
+
+15b. **The ring implodes while you hold.** During calibration, hold and watch
+     the dot. **Pass:** the ring visibly shrinks over the half second before
+     the point is taken. **Fail:** the point is taken with no visible change,
+     which reads to a participant as the phone ignoring them.
+
+15c. **Rotate mid-calibration.** The run should pause and ask for portrait
+     back, not quietly keep recording against a fit measured the other way up.
+
 ---
 
 ## D. The projected display
